@@ -1,0 +1,124 @@
+# termoclub/app/ui/MainMenu.py
+"""Главное меню верхней панели: Home, Settings, Help.
+
+Простейший вариант на `ft.MenuBar`: пункты с примером вложенного
+подменю и обязательным пунктом "Exit". Класс не зависит от Flet-страницы
+и терминалов — все действия отдаются наружу через колбэки.
+"""
+from __future__ import annotations
+
+from collections.abc import Callable
+
+import flet as ft
+
+from app.ui.FontAwesome import FontAwesome
+
+
+class MainMenu:
+    """Главное меню приложения (левая панель head/top)."""
+
+    def __init__(
+        self,
+        on_navigate: Callable[[str], None] | None = None,
+        on_new_tab: Callable[[], None] | None = None,
+        on_new_window: Callable[[], None] | None = None,
+        on_info: Callable[[str], None] | None = None,
+        on_exit: Callable[[], None] | None = None,
+    ) -> None:
+        self.on_navigate = on_navigate
+        self.on_new_tab = on_new_tab
+        self.on_new_window = on_new_window
+        self.on_info = on_info
+        self.on_exit = on_exit
+
+    def _item(
+        self,
+        label: str,
+        icon_name: str,
+        action: Callable[[], None] | None,
+    ) -> ft.MenuItemButton:
+        def handle_click(_: ft.ControlEvent) -> None:
+            if action is not None:
+                action()
+
+        return ft.MenuItemButton(
+            content=ft.Text(label),
+            leading=FontAwesome.icon(icon_name, size=14),
+            on_click=handle_click,
+        )
+
+    def build(self) -> ft.Control:
+        """Возвращает MenuBar: Home | Settings | Help."""
+        navigate = self.on_navigate or (lambda _route: None)
+        info = self.on_info or (lambda _message: None)
+
+        home_menu = ft.SubmenuButton(
+            content=ft.Text("Home"),
+            controls=[
+                self._item("Dashboard", "house", lambda: navigate("/")),
+                self._item("Event Log", "newspaper", lambda: navigate("/logs")),
+                ft.Divider(),
+                self._item(
+                    "New Tab",
+                    "plus",
+                    (lambda: self.on_new_tab() if self.on_new_tab else None),
+                ),
+                self._item(
+                    "New Window",
+                    "open-in-new",
+                    (lambda: self.on_new_window() if self.on_new_window else None),
+                ),
+                ft.Divider(),
+                self._item(
+                    "Exit",
+                    "xmark",
+                    (lambda: self.on_exit() if self.on_exit else None),
+                ),
+            ],
+        )
+
+        settings_menu = ft.SubmenuButton(
+            content=ft.Text("Settings"),
+            controls=[
+                # Пример вложенного подменю.
+                ft.SubmenuButton(
+                    content=ft.Text("Preferences"),
+                    controls=[
+                        self._item(
+                            "Appearance",
+                            "circle-info",
+                            lambda: info("Appearance settings are not implemented yet."),
+                        ),
+                        self._item(
+                            "Terminal",
+                            "terminal",
+                            lambda: info("Terminal settings are not implemented yet."),
+                        ),
+                    ],
+                ),
+                ft.Divider(),
+                self._item(
+                    "About Terminals",
+                    "circle-info",
+                    lambda: info("Supported terminals: ghostty, kitty."),
+                ),
+            ],
+        )
+
+        help_menu = ft.SubmenuButton(
+            content=ft.Text("Help"),
+            controls=[
+                self._item(
+                    "Documentation",
+                    "file-lines",
+                    lambda: info("Documentation is not implemented yet."),
+                ),
+                self._item(
+                    "About",
+                    "circle-info",
+                    lambda: info("TermoClub — terminal controller demo app."),
+                ),
+            ],
+        )
+
+        return ft.MenuBar(controls=[home_menu, settings_menu, help_menu])

@@ -1,0 +1,61 @@
+# termoclub/app/ui/FontAwesome.py
+"""Local Font Awesome Free icons for the Flet UI.
+
+Flet's `ft.Icon` renders Material icons only, so Font Awesome glyphs
+are rendered with `ft.Text` using the bundled OTF files (see
+`termoclub/assets/fonts/`). Use `FontAwesome.icon()` to get one.
+"""
+from __future__ import annotations
+
+import flet as ft
+
+#: Asset paths (relative to Flet `assets_dir`) of the bundled fonts.
+FONTS: dict[str, str] = {
+    "FA Solid": "/fonts/fa-solid-900.otf",
+    "FA Regular": "/fonts/fa-regular-400.otf",
+    "FA Brands": "/fonts/fa-brands-400.otf",
+}
+
+#: Curated subset of icons: name -> (unicode codepoint, font family).
+#: Codepoints come from the desktop bundle metadata (`icons.json`).
+_ICONS: dict[str, tuple[int, str]] = {
+    "terminal": (0xF120, "FA Solid"),
+    "house": (0xF015, "FA Solid"),
+    "plus": (0x002B, "FA Solid"),
+    "chevron-left": (0xF053, "FA Solid"),
+    "chevron-right": (0xF054, "FA Solid"),
+    "open-in-new": (0xF08E, "FA Solid"),
+    "newspaper": (0xF1EA, "FA Solid"),
+    "gear": (0xF013, "FA Solid"),
+    "folder": (0xF07B, "FA Solid"),
+    "puzzle-piece": (0xF12E, "FA Solid"),
+    "file-lines": (0xF15C, "FA Solid"),
+    "circle-info": (0xF05A, "FA Solid"),
+    "xmark": (0xF00D, "FA Solid"),
+    "bars": (0xF0C9, "FA Solid"),
+    "search": (0xF002, "FA Solid"),
+    "history": (0xF1DA, "FA Solid"),
+    "wifi": (0xF1EB, "FA Solid"),
+    "bell": (0xF0F3, "FA Solid"),
+    "circle-check": (0xF058, "FA Solid"),
+}
+
+
+class FontAwesome:
+    """Helper for Font Awesome Free icons bundled with the app."""
+
+    @staticmethod
+    def register(page: ft.Page) -> None:
+        """Registers the bundled fonts on the page (call once at startup)."""
+        fonts = dict(page.fonts or {})
+        fonts.update(FONTS)
+        page.fonts = fonts
+
+    @staticmethod
+    def icon(name: str, size: int = 16, color: str | None = None) -> ft.Text:
+        """Returns a Text control rendering the named icon glyph."""
+        try:
+            codepoint, family = _ICONS[name]
+        except KeyError:
+            raise ValueError(f"Unknown Font Awesome icon: {name!r}") from None
+        return ft.Text(chr(codepoint), font_family=family, size=size, color=color)

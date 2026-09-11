@@ -8,7 +8,7 @@ The default terminal implementation is **Ghostty**, with an isolation layer that
 
 The app is split into three layers:
 
-1. **UI layer (Flet)** — rendering and user actions only. Uses routes (`/`, `/logs`). Knows nothing about a concrete terminal; works exclusively through the standardized `TerminalController` interface.
+1. **UI layer (Flet)** — rendering and user actions only. The main window is a persistent 5-panel shell (top bar, collapsible left panel, central workspace, collapsible right panel, bottom status bar) ported from the Rhizome client layout. The top bar holds the main menu (`Home | Settings | Help`, with an `Exit` item), an expander, and system status icons; routes (`/`, `/logs`) swap only the workspace content. Knows nothing about a concrete terminal; works exclusively through the standardized `TerminalController` interface.
 2. **Standardized layer** — the abstract `TerminalController` (ABC) with a unified contract and a single `Result` format (`ok` + `message`):
    - `open_new_window(command=None, cwd=None) -> Result`
    - `open_new_tab(command=None, cwd=None) -> Result` (mandatory part of the contract)
@@ -18,19 +18,22 @@ The app is split into three layers:
 Supporting pieces:
 
 - `config.py` — which terminal is active by default (`ghostty`), overridable via the `TERMOCLUB_TERMINAL` env var.
+- `storage/` — user data (`~/.termoclub`) behind a single `FileManager` wrapper; archive and remote operations are stubs for now.
 - `logging_setup.py` — centralized logger: file (`logs/termoclub.log`, rotating) + console.
 - `events.py` — extension point for terminal events (tab colors, etc.), currently a stub.
+- Icons — Font Awesome Free 7.3.1 (SIL OFL 1.1), bundled locally under `termoclub/assets/fonts/` and rendered via `ft.Text` through the `FontAwesome` helper (Flet `ft.Icon` stays Material-only).
 
 ## Project structure
 
 ```
 termoclub/
-├── main.py                         # Entry point, starts Flet
+├── main.py                         # Entry point + 5-panel shell (top/left/workspace/right/bottom)
 ├── app/
 │   ├── routes.py                   # Routes and navigation
+│   ├── layout.py                   # CollapsiblePanel + ApplicationLayout (ported from Rhizome client)
 │   ├── pages/
-│   │   ├── home.py                 # Main screen
-│   │   └── logs.py                 # Logs screen (stub)
+│   │   ├── home.py                 # Main screen content (workspace)
+│   │   └── logs.py                 # Logs screen content (workspace)
 │   ├── ui/
 │   │   └── components.py           # Reusable UI elements
 │   └── state.py                    # Minimal app state
@@ -47,6 +50,7 @@ termoclub/
 │   │   └── kitty/                  # Kitty stub
 │   ├── events.py                   # Terminal events (stub)
 │   ├── config.py                   # Active terminal + settings
+│   ├── storage/                    # User data: FileManager + backends (profile `~/.termoclub`)
 │   └── result.py                   # Unified Result format
 ├── logging_setup.py
 └── logs/
