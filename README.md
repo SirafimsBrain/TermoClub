@@ -24,7 +24,7 @@ Supporting pieces:
 ## Project structure
 
 ```
-ghostty_wrapper/
+termoclub/
 ├── main.py                         # Entry point, starts Flet
 ├── app/
 │   ├── routes.py                   # Routes and navigation
@@ -64,13 +64,13 @@ ghostty_wrapper/
 python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 
-python ghostty_wrapper/main.py
+python termoclub/main.py
 ```
 
 To switch the active terminal (must be supported by the factory):
 
 ```bash
-TERMOCLUB_TERMINAL=ghostty python ghostty_wrapper/main.py
+TERMOCLUB_TERMINAL=ghostty python termoclub/main.py
 ```
 
 ## Tests
