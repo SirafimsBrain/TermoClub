@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+import inspect
 
 import flet as ft
 
@@ -22,12 +23,14 @@ class MainMenu:
         on_navigate: Callable[[str], None] | None = None,
         on_new_tab: Callable[[], None] | None = None,
         on_new_window: Callable[[], None] | None = None,
+        on_new_session: Callable[[], None] | None = None,
         on_info: Callable[[str], None] | None = None,
         on_exit: Callable[[], None] | None = None,
     ) -> None:
         self.on_navigate = on_navigate
         self.on_new_tab = on_new_tab
         self.on_new_window = on_new_window
+        self.on_new_session = on_new_session
         self.on_info = on_info
         self.on_exit = on_exit
 
@@ -37,9 +40,11 @@ class MainMenu:
         icon_name: str,
         action: Callable[[], None] | None,
     ) -> ft.MenuItemButton:
-        def handle_click(_: ft.ControlEvent) -> None:
+        async def handle_click(_: ft.ControlEvent) -> None:
             if action is not None:
-                action()
+                result = action()
+                if inspect.isawaitable(result):
+                    await result
 
         return ft.MenuItemButton(
             content=ft.Text(label),
@@ -67,6 +72,11 @@ class MainMenu:
                     "New Window",
                     "open-in-new",
                     (lambda: self.on_new_window() if self.on_new_window else None),
+                ),
+                self._item(
+                    "Internal Terminal",
+                    "terminal",
+                    (lambda: self.on_new_session() if self.on_new_session else None),
                 ),
                 ft.Divider(),
                 self._item(

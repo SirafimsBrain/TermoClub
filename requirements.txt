@@ -1,1 +1,3 @@
 flet>=0.86
+flet-terminal==0.3.6
+pyte==0.8.2

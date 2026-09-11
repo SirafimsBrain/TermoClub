@@ -176,11 +176,11 @@ class ApplicationLayout:
 
     def set_top_content(self, content: ft.Control) -> None:
         self.top_panel.content = content
-        self.top_panel.update()
+        self._safe_update(self.top_panel)
 
     def set_bottom_content(self, content: ft.Control) -> None:
         self.bottom_panel.content = content
-        self.bottom_panel.update()
+        self._safe_update(self.bottom_panel)
 
     def set_left_content(self, content: ft.Control) -> None:
         self.left_panel.set_content(content)
@@ -190,4 +190,11 @@ class ApplicationLayout:
 
     def set_workspace_content(self, content: ft.Control) -> None:
         self.workspace_panel.content = content
-        self.workspace_panel.update()
+        self._safe_update(self.workspace_panel)
+
+    @staticmethod
+    def _safe_update(control: ft.Control) -> None:
+        try:
+            control.update()
+        except RuntimeError:
+            pass  # Ещё не примонтирован к странице.

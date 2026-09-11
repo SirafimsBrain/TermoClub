@@ -2,6 +2,9 @@
 """Tests for the MainMenu class."""
 from __future__ import annotations
 
+import asyncio
+import inspect
+
 import flet as ft
 
 from app.ui.MainMenu import MainMenu
@@ -35,7 +38,9 @@ def _click_by_label(menu_bar: ft.MenuBar, label: str) -> None:
             content = node.content
             if isinstance(content, ft.Text) and content.value == label:
                 assert node.on_click is not None
-                node.on_click(None)  # type: ignore[arg-type]
+                result = node.on_click(None)  # type: ignore[arg-type]
+                if inspect.isawaitable(result):
+                    asyncio.run(result)
                 clicked.append(True)
         for attr in ("controls",):
             children = getattr(node, attr, None)
@@ -88,3 +93,12 @@ def test_settings_has_nested_preferences_submenu() -> None:
     assert "Preferences" in _texts(bar)
     assert "Appearance" in _texts(bar)
     assert "Terminal" in _texts(bar)
+
+
+def test_internal_terminal_triggers_callback() -> None:
+    """Internal Terminal opens a workspace session via callback."""
+    calls: list[bool] = []
+    bar = MainMenu(on_new_session=lambda: calls.append(True)).build()
+    assert isinstance(bar, ft.MenuBar)
+    _click_by_label(bar, "Internal Terminal")
+    assert calls == [True]

@@ -14,6 +14,8 @@ FONTS: dict[str, str] = {
     "FA Solid": "/fonts/fa-solid-900.otf",
     "FA Regular": "/fonts/fa-regular-400.otf",
     "FA Brands": "/fonts/fa-brands-400.otf",
+    # Monospace for the internal terminal (JetBrains Mono, SIL OFL 1.1).
+    "JetBrains Mono": "/fonts/jb-mono-regular.ttf",
 }
 
 #: Curated subset of icons: name -> (unicode codepoint, font family).
@@ -38,6 +40,8 @@ _ICONS: dict[str, tuple[int, str]] = {
     "wifi": (0xF1EB, "FA Solid"),
     "bell": (0xF0F3, "FA Solid"),
     "circle-check": (0xF058, "FA Solid"),
+    "grip-vertical": (0xF58E, "FA Solid"),
+    "window-maximize": (0xF2D0, "FA Solid"),
 }
 
 

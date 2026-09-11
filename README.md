@@ -35,9 +35,17 @@ termoclub/
 │   │   ├── home.py                 # Main screen content (workspace)
 │   │   └── logs.py                 # Logs screen content (workspace)
 │   ├── ui/
-│   │   └── components.py           # Reusable UI elements
+│   │   ├── components.py           # Reusable UI elements
+│   │   ├── WorkspaceTabBar.py      # Custom tab bar (Row, no ft.Tabs)
+│   │   ├── WorkspaceStage.py       # Tab content host (ft.Stack)
+│   │   ├── SessionCard*.py         # Session cards for the left panel
+│   ├── workspace/
+│   │   └── WorkspaceManager.py     # Tab/session state (no Flet state)
 │   └── state.py                    # Minimal app state
 ├── core/
+│   ├── sessions/                   # WorkspaceItem ABC, SessionFactory, terminal/editor/rdp
+│   │                               # (default terminal renders via pyte; `terminal-gpu`
+│   │                               # needs a `flet build` client with Flutter SDK)
 │   ├── terminal/
 │   │   ├── base.py                 # Abstract TerminalController
 │   │   ├── factory.py              # Factory / registry
