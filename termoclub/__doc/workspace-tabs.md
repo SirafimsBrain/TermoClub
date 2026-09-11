@@ -175,3 +175,99 @@ grid), session layout persistence via `FileManager` (`~/.termoclub`).
   external stage, `ghost` (F6E2) / `window-maximize` (F2D0).
 - Tests: card builds from a descriptor, list sync add/remove, reorder
   event forwards correct indices, adapter maps a stub item.
+
+## Implementation notes, round 3: ввод, кириллица и буфер обмена
+
+### Симптомы
+
+В терминале workspace (сессия `terminal`) печаталась только латиница, всегда
+в верхнем регистре, кириллица не вводилась вообще, вставки из буфера обмена
+не было.
+
+### Причина
+
+Ввод шёл одним каналом: `page.on_keyboard_event` -> `_on_page_key` ->
+`TerminalSession.handle_key()` -> `key_to_bytes(event.key)`. Flet собирает
+`KeyboardEvent.key` в Dart как `e.logicalKey.keyLabel`
+(`flet/packages/flet/lib/src/controls/page.dart`, версия 0.86.5):
+
+```dart
+KeyboardEvent(key: k.keyLabel, isAltPressed: ..., isShiftPressed: ...)
+```
+
+а `LogicalKeyboardKey.keyLabel` во Flutter — это
+`String.fromCharCode(keyId).toUpperCase()`: **логическая** (US-раскладка)
+метка клавиши в верхнем регистре, игнорирующая раскладку и модификаторы.
+Отсюда ровно оба симптома: раскладка не учитывается (вместо `ф` приходит
+`A`), а регистр и Shift теряются (`shift+8` -> `8`, а не `*`). Вставка
+не работала потому, что текста в этом событии нет вообще — ни `Ctrl+V`, ни
+`Shift+Insert` не доходили до PTY.
+
+`flet-terminal` (`terminal-gpu`) в этом не виноват: он ввод не обрабатывает,
+символы отдаёт xterm.dart через свой IME, а наш Python только принимает байты
+(`set_on_bytes`). Но и у него не была подключена вставка из буфера обмена.
+
+### Решение
+
+Ввод разделён на два канала:
+
+- **Настоящие символы** (кириллица, регистр, AltGr, dead keys, вставка) идут
+  из невидимого `ft.TextField` (`width=1, height=1, opacity=0`, autofocus) —
+  Flutter пропускает его через IME и отдаёт настоящий текст. Поле всегда
+  пустое: `_on_text_input()` переводит очередное значение в байты
+  (`TextInputBridge`), очищает поле и пишет в PTY. Enter приходит в
+  `on_submit` -> `\r`.
+- **Служебные клавиши** (Backspace, стрелки, Tab, Esc, F-клавиши, `Ctrl+<буква>`)
+  остаются на `page.on_keyboard_event`: для них логической метки достаточно.
+  `handle_key()` отдаёт поле ввода то, что оно «съедает» само (печатаемые
+  символы, пробел, Enter, `Ctrl+V`, `Shift+Insert`), иначе ввод дублировался бы.
+
+Вставка из буфера: `Ctrl+V` / `Shift+Insert` обрабатывает само поле ввода
+(Flutter вставляет текст в него, дальше работает тот же diff),
+а `Ctrl+Shift+V` (и те же хоткеи, пока поле ещё не смонтировано) читает
+`ft.Clipboard()` и пишет текст в PTY напрямую.
+
+Сессия `terminal-gpu` получила `handle_key()` с теми же хоткеями
+(на Python остаётся только вставка — клавиатуру обрабатывает xterm.dart через
+`Terminal.paste()`), а также обработчик события `on_data`: без открытого
+`DataChannel` flet-terminal отдаёт ввод строкой, и раньше эти байты терялись.
+
+## Implementation notes, round 4: разбор pyte-терминала по классам
+
+Один класс на файл, имя файла = имя класса — как в остальном проекте.
+`TerminalSession` осталась только оркестрацией, всё остальное вынесено:
+
+| Класс | Ответственность |
+| --- | --- |
+| `PtyBridge` | псевдотерминал: `start()`, `write()`, `pump()`, `resize()` (TIOCSWINSZ -> SIGWINCH шеллу), `terminate()` |
+| `PyteScreen` | эмуляция VT100/ANSI: `feed_bytes()`/`feed()`, `row(y)`, `cursor`, `resize()`, `text()`; инкрементальный UTF-8-декодер (символ, разрезанный чанком, не ломается) |
+| `TerminalPalette` | цвета pyte -> Flet: имена ANSI, `bright*`, 6-hex truecolor; `bold` подсвечивает базовый цвет до bright (сетка не съезжает, bold-начертания в бандле нет) |
+| `TerminalView` | контролы Flet: `ft.Text` со спанами (цвет «прогона» ячеек, `italics`/`underline`/`strike`, инверсия под `reverse`), блочный курсор, скрытое поле ввода, `on_size_change` -> колонки/строки |
+| `TextInputBridge` | diff значений скрытого поля (дописывание/Backspace/замена) в байты PTY |
+| `TerminalKeymap` | служебные клавиши и `Ctrl+<буква>`/`Alt+<символ>` в байты (в т.ч. `Alt+Ctrl+C` -> `ESC 0x03`) |
+| `TerminalSession` | сессия рабочей области: PTY + экран + вью, каналы ввода, буфер обмена, фокус |
+
+Порядок отрисовки: `TerminalView.spans(screen)` строит по строке список
+атрибутов ячеек, срезает пустой хвост (проверяя и символ, и атрибуты —
+иначе срезались бы обычные буквы), склеивает соседние одинаковые ячейки в
+один спан и добавляет блок курсора. Обновление — по троттлингу сессии
+(`REFRESH_MIN_INTERVAL`, 20 Гц).
+
+Размер терминала: `ft.Container.on_size_change` даёт пиксели контейнера,
+`TerminalView` переводит их в колонки/строки (ширина знакоместа `0.6em`,
+высота строки `1.25` кегля) и сообщает наружу; `TerminalSession.resize()`
+меняет `PyteScreen` и PTY. Повторный тот же размер не рассылается.
+
+Файлы round 3/4: `TextInputBridge.py`, `TerminalKeymap.py`, `PyteScreen.py`,
+`TerminalPalette.py`, `TerminalView.py`, `TerminalSession.py`,
+`FletTerminalSession.py` (+ `*_test.py` на каждый).
+
+Ограничения (осознанные):
+
+- Фокус скрытого поля — единственный путь для IME-символов, поэтому `Tab`
+  возвращает фокус обратно, а `Alt+<буква>` не префиксуется `ESC` (иначе
+  AltGr-символы вроде `@` ломались бы); `Ctrl+<буква>`, стрелки, `Esc`,
+  `F-клавиши` и вставка работают штатно.
+- История (`pyte.HistoryScreen`, 1000 строк) пока не отрисовывается: у
+  `ft.ListView(auto_scroll=True)` нет доступа к позиции скролла, список бы
+  «прилипал» к низу. Слот под скроллбек есть (`PyteScreen`, `history=`).

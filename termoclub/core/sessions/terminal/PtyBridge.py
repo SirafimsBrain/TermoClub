@@ -93,6 +93,14 @@ class PtyBridge:
             on_data(chunk)
         logger.info("PtyBridge: pump finished (pid=%s)", self._child_pid)
 
+    def resize(self, cols: int, rows: int) -> None:
+        """Меняет размер окна PTY (шелл получает SIGWINCH)."""
+        self._cols = cols
+        self._rows = rows
+        if self._master_fd is not None:
+            self._set_winsize(self._master_fd)
+        logger.info("PtyBridge: resized to %dx%d", cols, rows)
+
     def request_stop(self) -> None:
         """Просит pump-цикл остановиться (мягко)."""
         self._stop.set()

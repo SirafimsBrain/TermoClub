@@ -1,0 +1,93 @@
+# termoclub/core/sessions/terminal/TerminalKeymap.py
+"""Раскладка клавиатуры: служебная клавиша Flet -> байты для PTY.
+
+Flet отдаёт в `KeyboardEvent.key` только `LogicalKeyboardKey.keyLabel` —
+логическую (US) метку клавиши в верхнем регистре, без учёта раскладки и
+модификаторов. Поэтому здесь маппятся только служебные клавиши и
+управляющие комбинации; печатаемые символы приходят из скрытого поля
+ввода (см. `TextInputBridge`).
+"""
+from __future__ import annotations
+
+#: Модификаторы: сами по себе байт не порождают.
+MODIFIER_ONLY = frozenset(
+    {
+        "Shift",
+        "Control",
+        "Alt",
+        "Meta",
+        "Caps Lock",
+        "Num Lock",
+        "Scroll Lock",
+        "Insert",
+    }
+)
+
+#: Служебные клавиши в кодировках VT/xterm.
+SPECIALS = {
+    "Enter": b"\r",
+    "Backspace": b"\x7f",
+    "Tab": b"\t",
+    "Escape": b"\x1b",
+    "Delete": b"\x1b[3~",
+    "Home": b"\x1b[H",
+    "End": b"\x1b[F",
+    "Page Up": b"\x1b[5~",
+    "Page Down": b"\x1b[6~",
+    "Arrow Up": b"\x1b[A",
+    "Arrow Down": b"\x1b[B",
+    "Arrow Right": b"\x1b[C",
+    "Arrow Left": b"\x1b[D",
+    " ": b" ",
+    "Space": b" ",
+    "F1": b"\x1bOP",
+    "F2": b"\x1bOQ",
+    "F3": b"\x1bOR",
+    "F4": b"\x1bOS",
+    "F5": b"\x1b[15~",
+    "F6": b"\x1b[17~",
+    "F7": b"\x1b[18~",
+    "F8": b"\x1b[19~",
+    "F9": b"\x1b[20~",
+    "F10": b"\x1b[21~",
+    "F11": b"\x1b[23~",
+    "F12": b"\x1b[24~",
+}
+
+
+class TerminalKeymap:
+    """Переводит служебные клавиши и комбинации в байты терминала."""
+
+    @staticmethod
+    def is_modifier(key: str) -> bool:
+        """True для клавиш-модификаторов (Shift, Ctrl, ...)."""
+        return key in MODIFIER_ONLY
+
+    @staticmethod
+    def to_bytes(
+        key: str,
+        shift: bool = False,
+        ctrl: bool = False,
+        alt: bool = False,
+        meta: bool = False,
+    ) -> bytes | None:
+        """Возвращает байты для PTY или None, если клавиша не наша.
+
+        `Ctrl+C` -> `0x03`, `Alt+x` -> `ESC x`, стрелки/`F-клавиши` -> их
+        escape-последовательности. Печатаемые символы без модификаторов
+        сюда не относятся: их отдаёт поле ввода с учётом раскладки.
+        """
+        if TerminalKeymap.is_modifier(key):
+            return None
+        if ctrl or meta:
+            if len(key) == 1 and key.isalpha():
+                code = bytes([ord(key.lower()) - 96])  # Ctrl+C -> 0x03 и т.д.
+                return b"\x1b" + code if alt else code  # Alt+Ctrl+C -> ESC 0x03
+            return None
+        if alt and len(key) == 1:
+            return b"\x1b" + key.encode("utf-8", errors="ignore")
+        if key in SPECIALS:
+            return SPECIALS[key]
+        if len(key) == 1:
+            return key.encode("utf-8", errors="ignore")
+        return None

@@ -1,5 +1,11 @@
 # termoclub/core/sessions/terminal/FletTerminalSession.py
-"""Сессия внутреннего терминала на flet-terminal (нужен собранный клиент)."""
+"""Сессия внутреннего терминала на flet-terminal (нужен собранный клиент).
+
+Символы ввода здесь отдаёт сам xterm.dart (он пропускает нажатия через
+IME Flutter, поэтому кириллица и регистр работают), поэтому на Python
+остаётся только вставка из буфера обмена: у контрола нет своего
+клавиатурного диспетчера, и `Ctrl+V` до него не доходит.
+"""
 from __future__ import annotations
 
 import logging
@@ -13,6 +19,9 @@ from core.sessions.terminal.PtyBridge import PtyBridge
 from core.sessions.WorkspaceItem import WorkspaceItem
 
 logger = logging.getLogger(__name__)
+
+#: Клавиши со «вставкой» из системного буфера обмена.
+_PASTE_KEYS = {"V", "Insert"}
 
 
 class FletTerminalSession(WorkspaceItem):
@@ -41,6 +50,7 @@ class FletTerminalSession(WorkspaceItem):
         self._bridge = PtyBridge(shell=shell, args=args, cwd=cwd, cols=cols, rows=rows)
         self._terminal: Terminal | None = None
         self._pump_future = None
+        self._page: ft.Page | None = None
         self.on_terminated = on_terminated
 
     @property
@@ -49,6 +59,7 @@ class FletTerminalSession(WorkspaceItem):
 
     def start(self, page: ft.Page) -> None:
         """Запускает PTY и pump-насос задачей UI-цикла."""
+        self._page = page
         self._status = SessionStatus.RUNNING
         self._pump_future = page.run_task(self._run)
         logger.info("FletTerminalSession %s: started", self.session_id)
@@ -82,6 +93,7 @@ class FletTerminalSession(WorkspaceItem):
                 font_size=13.0,
                 cursor_blink=True,
                 expand=True,
+                on_data=self._on_terminal_data,
             )
             self._terminal.set_on_bytes(self._on_user_input)
         if self._content is None:
@@ -90,6 +102,43 @@ class FletTerminalSession(WorkspaceItem):
 
     def _on_user_input(self, data: bytes) -> None:
         self._bridge.write(data)
+
+    def _on_terminal_data(self, event: ft.ControlEvent) -> None:
+        """Строковый канал ввода — используется, пока не открыт DataChannel."""
+        data = getattr(event, "data", None)
+        if data:
+            self._bridge.write(str(data).encode("utf-8"))
+
+    def handle_key(self, event: ft.KeyboardEvent) -> bool:
+        """Перехватывает только вставку из буфера обмена.
+
+        Остальные клавиши обрабатывает сам xterm.dart, поэтому в PTY
+        ничего не дублируется.
+        """
+        if not self._is_paste_shortcut(event):
+            return False
+        self.paste()
+        return True
+
+    def _is_paste_shortcut(self, event: ft.KeyboardEvent) -> bool:
+        """Ctrl/⌘+V, Ctrl/⌘+Shift+V и Shift+Insert вставляют из буфера обмена."""
+        if event.key not in _PASTE_KEYS:
+            return False
+        if event.key == "Insert":
+            return event.shift
+        return event.ctrl or event.meta
+
+    def paste(self) -> None:
+        """Просит Dart-сторону прочитать системный буфер обмена и отдать его в PTY."""
+        terminal = self._terminal
+        if terminal is None or not hasattr(terminal, "paste"):
+            logger.warning(
+                "FletTerminalSession %s: clipboard paste is not available",
+                self.session_id,
+            )
+            return
+        terminal.paste()
+        logger.info("FletTerminalSession %s: paste requested", self.session_id)
 
     def on_focus(self) -> None:
         super().on_focus()

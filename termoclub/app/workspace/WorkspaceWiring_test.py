@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+from types import SimpleNamespace
 
 import flet as ft
 import pytest
@@ -65,8 +66,18 @@ def _key(key: str, **mods) -> ft.KeyboardEvent:
     )
 
 
-def test_key_dispatcher_roundtrip() -> None:
-    """Клавиша: диспетчер -> PTY (cat) -> pump -> текст экрана."""
+def _change(value: str):  # type: ignore[no-untyped-def]
+    """Мок события on_change скрытого поля ввода."""
+    return SimpleNamespace(control=SimpleNamespace(value=value))
+
+
+def test_text_input_roundtrip() -> None:
+    """Ввод: скрытое поле -> PTY (cat) -> pump -> текст экрана.
+
+    Печатаемые символы идут через IME-поле `TerminalView`, а не через
+    диспетчер `page.on_keyboard_event`: тот отдаёт только логические метки
+    клавиш (латиница в верхнем регистре без раскладки).
+    """
     if os.name == "nt":
         pytest.skip("PTY is not supported on Windows")
 
@@ -76,11 +87,12 @@ def test_key_dispatcher_roundtrip() -> None:
         app.start()
         item = app.manager.open("terminal", page, shell="/bin/cat", args=[])  # type: ignore[arg-type]
         await asyncio.wait_for(_wait_running(item), timeout=10)
-        for ch in "hi":
-            app._on_page_key(_key(ch))
-        app._on_page_key(_key("Enter"))
-        await asyncio.wait_for(_wait_text(item, "hi"), timeout=10)
-        assert "hi" in item.display_text
+        item._view._on_field_change(_change("привет"))
+        await asyncio.wait_for(_wait_text(item, "привет"), timeout=10)
+        assert "привет" in item.display_text
+        # Диспетчер молчит: символы не дублируются.
+        app._on_page_key(_key("a"))
+        assert item.display_text.count("привет") == 1
         app.manager.close(item.session_id)
 
     asyncio.run(scenario())
