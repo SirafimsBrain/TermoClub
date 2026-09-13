@@ -82,7 +82,7 @@ class MainMenu:
                     (lambda: self.on_new_session() if self.on_new_session else None),
                 ),
                 self._item(
-                    "Internal Terminal (flet-terminal)",
+                    "Internal Terminal (smartcli-toolkit)",
                     "terminal",
                     (
                         lambda: self.on_new_gpu_session()

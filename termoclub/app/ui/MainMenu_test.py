@@ -105,9 +105,9 @@ def test_internal_terminal_triggers_callback() -> None:
 
 
 def test_internal_gpu_terminal_triggers_callback() -> None:
-    """Internal Terminal (flet-terminal) opens the GPU renderer session."""
+    """Internal Terminal (smartcli-toolkit) opens the GPU renderer session."""
     calls: list[bool] = []
     bar = MainMenu(on_new_gpu_session=lambda: calls.append(True)).build()
     assert isinstance(bar, ft.MenuBar)
-    _click_by_label(bar, "Internal Terminal (flet-terminal)")
+    _click_by_label(bar, "Internal Terminal (smartcli-toolkit)")
     assert calls == [True]

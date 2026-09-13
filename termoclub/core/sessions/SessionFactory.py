@@ -21,9 +21,9 @@ def _terminal(**kwargs) -> WorkspaceItem:
 
 
 def _terminal_gpu(**kwargs) -> WorkspaceItem:
-    from core.sessions.terminal.FletTerminalSession import FletTerminalSession
+    from core.sessions.terminal.SmartCLITerminalSession import SmartCLITerminalSession
 
-    return FletTerminalSession(**kwargs)
+    return SmartCLITerminalSession(**kwargs)
 
 
 def _editor(**kwargs) -> WorkspaceItem:
@@ -40,7 +40,7 @@ def _rdp(**kwargs) -> WorkspaceItem:
 
 _REGISTRY: dict[str, callable] = {
     "terminal": _terminal,  # pyte-рендер, работает со stock-клиентом
-    "terminal-gpu": _terminal_gpu,  # flet-terminal, нужен `flet build`
+    "terminal-gpu": _terminal_gpu,  # smartcli-toolkit, нужен `flet build` (если используется флет-терминал) или зависит от smartcli-toolkit
     "editor": _editor,
     "rdp": _rdp,
 }

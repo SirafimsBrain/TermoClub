@@ -8,6 +8,7 @@ from core.sessions.editor.EditorSession import EditorSession
 from core.sessions.rdp.RdpSession import RdpSession
 from core.sessions.SessionFactory import SessionFactory
 from core.sessions.terminal.FletTerminalSession import FletTerminalSession
+from core.sessions.terminal.SmartCLITerminalSession import SmartCLITerminalSession
 from core.sessions.terminal.TerminalSession import TerminalSession
 from core.sessions.WorkspaceItem import WorkspaceItem
 
@@ -15,7 +16,7 @@ from core.sessions.WorkspaceItem import WorkspaceItem
 def test_create_terminal_editor_rdp() -> None:
     """Фабрика создаёт все зарегистрированные типы сессий."""
     assert isinstance(SessionFactory.create("terminal"), TerminalSession)
-    assert isinstance(SessionFactory.create("terminal-gpu"), FletTerminalSession)
+    assert isinstance(SessionFactory.create("terminal-gpu"), SmartCLITerminalSession)
     assert isinstance(SessionFactory.create("editor"), EditorSession)
     assert isinstance(SessionFactory.create("rdp"), RdpSession)
 

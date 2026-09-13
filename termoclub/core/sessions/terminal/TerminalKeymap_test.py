@@ -32,8 +32,9 @@ def test_control_and_alt_combinations() -> None:
 
 def test_printable_keys_and_modifiers() -> None:
     """Печатаемые клавиши отдаются как есть, модификаторы байт не дают."""
-    assert TerminalKeymap.to_bytes("a") == b"a"
-    assert TerminalKeymap.to_bytes("1") == b"1"
+    # Печатаемые символы без модификаторов обрабатываются полем ввода, поэтому keymap возвращает None
+    assert TerminalKeymap.to_bytes("a") is None
+    assert TerminalKeymap.to_bytes("1") is None
     assert TerminalKeymap.to_bytes("Shift") is None
     assert TerminalKeymap.to_bytes("Control") is None
     assert TerminalKeymap.to_bytes("Unknown Key") is None

@@ -213,6 +213,11 @@ class TerminalSession(WorkspaceItem):
         focused = self._input_focused()
         if focused and self._belongs_to_text_field(event):
             return False
+        # If not focused and the key is a printable character (US layout), send it directly.
+        if not focused and len(event.key) == 1 and not (event.ctrl or event.alt or event.meta):
+            self._bridge.write(event.key.encode("utf-8", errors="ignore"))
+            self.focus_input()
+            return True
         data = TerminalKeymap.to_bytes(
             event.key,
             shift=event.shift,

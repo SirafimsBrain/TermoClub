@@ -88,6 +88,9 @@ class TerminalKeymap:
             return b"\x1b" + key.encode("utf-8", errors="ignore")
         if key in SPECIALS:
             return SPECIALS[key]
+        # Printable characters without ctrl, alt, meta are handled by the input field
+        if len(key) == 1 and not (ctrl or alt or meta):
+            return None
         if len(key) == 1:
             return key.encode("utf-8", errors="ignore")
         return None
