@@ -24,6 +24,7 @@ class MainMenu:
         on_new_tab: Callable[[], None] | None = None,
         on_new_window: Callable[[], None] | None = None,
         on_new_session: Callable[[], None] | None = None,
+        on_new_gpu_session: Callable[[], None] | None = None,
         on_info: Callable[[str], None] | None = None,
         on_exit: Callable[[], None] | None = None,
     ) -> None:
@@ -31,6 +32,7 @@ class MainMenu:
         self.on_new_tab = on_new_tab
         self.on_new_window = on_new_window
         self.on_new_session = on_new_session
+        self.on_new_gpu_session = on_new_gpu_session
         self.on_info = on_info
         self.on_exit = on_exit
 
@@ -73,10 +75,20 @@ class MainMenu:
                     "open-in-new",
                     (lambda: self.on_new_window() if self.on_new_window else None),
                 ),
+                # Два рендерера внутреннего терминала: видно, какой открывается.
                 self._item(
-                    "Internal Terminal",
+                    "Internal Terminal (pyte)",
                     "terminal",
                     (lambda: self.on_new_session() if self.on_new_session else None),
+                ),
+                self._item(
+                    "Internal Terminal (flet-terminal)",
+                    "terminal",
+                    (
+                        lambda: self.on_new_gpu_session()
+                        if self.on_new_gpu_session
+                        else None
+                    ),
                 ),
                 ft.Divider(),
                 self._item(

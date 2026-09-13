@@ -32,6 +32,14 @@ logger = logging.getLogger(__name__)
 #: Local Flet assets (fonts, ...). Absolute so the app works from any cwd.
 ASSETS_DIR = Path(__file__).resolve().parent / "assets"
 
+#: Рендерер -> заголовок вкладки: в UI сразу видно, какой терминал открыт.
+#: `terminal` — pyte + Flet (stock-клиент), `terminal-gpu` — flet-terminal
+#: (Dart-расширение, нужен клиент из `flet build`).
+TERMINAL_TITLES = {
+    "terminal": "Terminal (pyte)",
+    "terminal-gpu": "Terminal (flet)",
+}
+
 
 class TermoClubApp:
     """Каркас главного окна: панели + роутинг в рабочую область."""
@@ -59,6 +67,9 @@ class TermoClubApp:
             [self.tab_bar.build(), self.stage.build()],
             spacing=0,
             expand=True,
+            # STRETCH даёт сцене тугую ширину: иначе стек сцены сжимается
+            # по содержимому и терминал не может занять всю область.
+            horizontal_alignment=ft.CrossAxisAlignment.STRETCH,
         )
         self._status_text = ft.Text("Готов", size=11)
         self._terminal_text = ft.Text("", size=12)
@@ -77,9 +88,19 @@ class TermoClubApp:
         logger.info("Exit requested from main menu")
         self.page.window.close()
 
-    def _open_terminal(self) -> None:
-        """Открывает вкладку внутреннего терминала в workspace."""
-        self.manager.open("terminal", self.page)
+    def _open_terminal(self, kind: str = "terminal") -> None:
+        """Открывает вкладку внутреннего терминала выбранного рендерера."""
+        title = TERMINAL_TITLES.get(kind, kind)
+        kwargs: dict = {}
+        if kind == "terminal-gpu":
+            # Без Dart-расширения вкладка будет пустой — сообщаем об этом явно.
+            kwargs["on_renderer_missing"] = self._on_renderer_missing
+        self.manager.open(kind, self.page, title=title, **kwargs)
+
+    def _on_renderer_missing(self, message: str) -> None:
+        """Рендерер flet-terminal недоступен в текущем клиенте."""
+        self.set_status(message)
+        show_snack(self.page, message, is_error=True)
 
     def _refresh_workspace(self) -> None:
         """Сверяет вкладки, сцену и карточки с состоянием менеджера."""
@@ -111,7 +132,8 @@ class TermoClubApp:
             on_navigate=lambda route: page.push_route(route),
             on_new_tab=lambda: open_new_tab(page, self.set_status),
             on_new_window=lambda: open_new_window(page, self.set_status),
-            on_new_session=self._open_terminal,
+            on_new_session=lambda: self._open_terminal("terminal"),
+            on_new_gpu_session=lambda: self._open_terminal("terminal-gpu"),
             on_info=lambda message: show_snack(page, message),
             on_exit=self.exit_app,
         )
@@ -162,8 +184,8 @@ class TermoClubApp:
         logger.info("Route changed: %s", route)
 
     async def _bootstrap(self) -> None:
-        """Отложенно открывает первую вкладку терминала."""
-        self.manager.open("terminal", self.page)
+        """Отложенно открывает первую вкладку терминала (pyte-рендер)."""
+        self._open_terminal("terminal")
 
     def _on_page_key(self, e: ft.KeyboardEvent) -> None:
         """Пересылает клавиши активной сессии (только маршрут workspace)."""

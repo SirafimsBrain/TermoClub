@@ -8,7 +8,7 @@ import flet as ft
 
 from core.sessions.terminal.PyteScreen import PyteScreen
 from core.sessions.terminal.TerminalPalette import DEFAULT_BG, DEFAULT_FG
-from core.sessions.terminal.TerminalView import TerminalView
+from core.sessions.terminal.TerminalView import MONO_LINE_HEIGHT, TerminalView
 
 
 def _view(**kwargs) -> tuple[TerminalView, list[bytes]]:
@@ -140,3 +140,67 @@ def test_tiny_size_falls_back_to_minimums() -> None:
     view.control
     view._on_size_change(_size(4, 4))
     assert resized == [(20, 4)]
+
+
+def test_zero_size_is_ignored() -> None:
+    """Неразложенный контейнер (0x0) не схлопывает окно PTY до минимума."""
+    resized: list[tuple[int, int]] = []
+    view, _ = _view(on_resize=lambda c, l: resized.append((c, l)))
+    view.control
+    view._on_size_change(_size(0, 0))
+    view._on_size_change(_size(600, 0))
+    assert resized == []
+    view._on_size_change(_size(600, 200))
+    assert len(resized) == 1
+
+
+def test_terminal_is_a_clipped_grid_without_scrollbar() -> None:
+    """Терминал — фиксированная сетка: скроллить нечего и негде.
+
+    `ListView(auto_scroll=True)` раньше «прилипал» к низу, когда сетка не
+    влезала во вьюпорт, и экран показывал только пустые строки вместо
+    приглашения.
+    """
+    view, _ = _view()
+    control = view.control
+    assert control.clip_behavior == ft.ClipBehavior.HARD_EDGE
+    stack = control.content
+    assert isinstance(stack, ft.Stack)
+    assert not any(isinstance(child, ft.ListView) for child in stack.controls)
+
+
+def test_every_span_carries_the_line_height() -> None:
+    """Высота строки задана у всех спанов: высота отрисовки предсказуема."""
+    view, _ = _view()
+    view.control
+    screen = PyteScreen(columns=8, lines=3)
+    screen.feed("ab\r\ncd")
+    spans = view.spans(screen)
+    assert spans
+    assert all(span.style.height == MONO_LINE_HEIGHT for span in spans)
+    assert _text(spans).count("\n") == 2
+
+
+def test_grid_fits_into_the_reported_container_size() -> None:
+    """Сетка считается по пикселям контейнера и целиком в него влезает."""
+    resized: list[tuple[int, int]] = []
+    view, _ = _view(on_resize=lambda c, l: resized.append((c, l)), font_size=10)
+    view.control
+    view._on_size_change(_size(600, 200))
+    columns, lines = resized[-1]
+    assert columns * view._char_width <= 600 - 2 * view._padding
+    assert lines * view._line_height <= 200 - 2 * view._padding
+
+
+def test_focus_is_tracked_and_click_requests_it() -> None:
+    """Фокус поля отслеживается, а клик по терминалу его возвращает."""
+    requested: list[bool] = []
+    view, _ = _view(on_focus_request=lambda: requested.append(True))
+    view.control
+    assert view.input_focused is False
+    view._on_field_focus(None)  # type: ignore[arg-type]
+    assert view.input_focused is True
+    view._on_field_blur(None)  # type: ignore[arg-type]
+    assert view.input_focused is False
+    view._on_click(None)  # type: ignore[arg-type]
+    assert requested == [True]

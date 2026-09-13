@@ -2,6 +2,7 @@
 """Тесты pyte-сессии терминала (без страницы): каналы ввода и жизненный цикл."""
 from __future__ import annotations
 
+import asyncio
 from types import SimpleNamespace
 
 import flet as ft
@@ -26,6 +27,12 @@ class _FakePage:
         future = _Future()
         self.future = future
         return future
+
+    def run_all(self) -> None:
+        """Выполняет поставленные задачи (корутины) синхронно."""
+        for handler, args in self.tasks:
+            asyncio.run(handler(*args))
+        self.tasks.clear()
 
 
 def _key(key: str, **mods) -> ft.KeyboardEvent:
@@ -76,9 +83,10 @@ def test_pty_output_renders_to_display() -> None:
 
 
 def test_hidden_field_owns_printable_input() -> None:
-    """Печатаемые символы уходят через скрытое поле, а не через диспетчер."""
+    """При фокусе в поле символы идут только через него — без дублирования."""
     session = TerminalSession()
     session.get_content()
+    session._view._on_field_focus(None)  # autofocus поля до первого ввода
     written = _collected(session)
     session._view._on_field_change(
         SimpleNamespace(data="Привет", control=SimpleNamespace(value=""))
@@ -89,9 +97,10 @@ def test_hidden_field_owns_printable_input() -> None:
 
 
 def test_service_keys_go_through_dispatcher() -> None:
-    """Служебные клавиши обрабатывает диспетчер клавиш."""
+    """Служебные клавиши работают и при фокусе в скрытом поле."""
     session = TerminalSession()
     session.get_content()
+    session._view._on_field_focus(None)
     written = _collected(session)
     assert session.handle_key(_key("Backspace")) is True
     assert session.handle_key(_key("Arrow Up")) is True
@@ -108,6 +117,57 @@ def test_input_without_hidden_field_falls_back_to_dispatcher() -> None:
     assert written == [b"a"]
 
 
+def test_lost_focus_still_accepts_input_and_refocuses() -> None:
+    """Потеря фокуса не должна «глушить» терминал: символы идут из диспетчера."""
+    session = TerminalSession()
+    session.get_content()
+    written = _collected(session)
+    focused: list[bool] = []
+    session.focus_input = lambda: focused.append(True)  # type: ignore[method-assign]
+    assert session.handle_key(_key("a")) is True
+    assert written == [b"a"]
+    assert focused == [True]
+
+
+def test_content_renders_the_prompt_seen_before_mount() -> None:
+    """Приглашение, пришедшее до монтирования, попадает на экран."""
+    session = TerminalSession()
+    session._on_pty_data(b"root@host:~# ")
+    assert session._content is None
+    control = session.get_content()
+    assert isinstance(control, ft.Control)
+    rendered = "".join(span.text or "" for span in session._view._text.spans)
+    assert "root@host:~#" in rendered
+
+
+def test_ctrl_c_stays_sigint() -> None:
+    """Обычный Ctrl+C не перехватывается под копирование."""
+    session = TerminalSession()
+    session.get_content()
+    written = _collected(session)
+    assert session.handle_key(_key("c", ctrl=True)) is True
+    assert written == [b"\x03"]
+
+
+def test_copy_shortcuts_put_visible_screen_on_clipboard() -> None:
+    """Ctrl+Shift+C и Ctrl+Insert копируют видимую область экрана."""
+    session = TerminalSession()
+    page = _FakePage()
+    session._page = page  # type: ignore[assignment]
+    session.get_content()
+    session._on_pty_data(b"hello\r\nworld\r\n")
+    copied: list[str] = []
+
+    async def fake_copy(text: str) -> None:
+        copied.append(text)
+
+    session._copy_to_clipboard = fake_copy  # type: ignore[method-assign]
+    assert session.handle_key(_key("C", ctrl=True, shift=True)) is True
+    assert session.handle_key(_key("Insert", ctrl=True)) is True
+    page.run_all()
+    assert copied == ["hello\nworld", "hello\nworld"]
+
+
 def test_shift_control_paste_uses_clipboard() -> None:
     """Ctrl+Shift+V не уходит в PTY, а запрашивает вставку из буфера."""
     session = TerminalSession()
@@ -117,6 +177,19 @@ def test_shift_control_paste_uses_clipboard() -> None:
     session.paste = lambda: pasted.append(1)  # type: ignore[method-assign]
     assert session.handle_key(_key("V", ctrl=True, shift=True)) is True
     assert pasted == [1]
+    assert written == []
+
+
+def test_plain_paste_shortcut_stays_with_the_focused_field() -> None:
+    """Ctrl+V при фокусе в поле — вставка силами самого поля, без дубля."""
+    session = TerminalSession()
+    session.get_content()
+    session._view._on_field_focus(None)
+    written = _collected(session)
+    pasted: list[int] = []
+    session.paste = lambda: pasted.append(1)  # type: ignore[method-assign]
+    assert session.handle_key(_key("V", ctrl=True)) is False
+    assert pasted == []
     assert written == []
 
 

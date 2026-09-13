@@ -49,6 +49,14 @@ def test_utf8_survives_chunk_boundaries() -> None:
     assert screen.text().startswith("ф")
 
 
+def test_visible_text_trims_padding_and_empty_tail() -> None:
+    """Для буфера обмена пустые поля срезаются, пустой хвост отбрасывается."""
+    screen = PyteScreen(columns=12, lines=4)
+    screen.feed("one\r\ntwo")
+    assert screen.visible_text() == "one\ntwo"
+    assert PyteScreen(columns=8, lines=3).visible_text() == ""
+
+
 def test_resize_reports_change() -> None:
     """resize() меняет размер и сообщает, изменился ли он."""
     screen = PyteScreen(columns=80, lines=24)

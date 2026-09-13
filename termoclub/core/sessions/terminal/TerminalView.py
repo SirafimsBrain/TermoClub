@@ -7,12 +7,24 @@
 
 * `on_bytes(bytes)` — текст, набранный в скрытом поле (через IME Flutter),
   и `Enter` из него;
-* `on_resize(columns, lines)` — новый размер терминала в символах.
+* `on_resize(columns, lines)` — новый размер терминала в символах;
+* `on_focus_request()` — пользователь кликнул по терминалу.
+
+Терминал — **сетка фиксированного размера, а не прокручиваемый список**.
+Скроллбек живёт внутри pyte, а видимая область обязана ровно совпадать с
+размером контейнера: иначе контент переполняет вьюпорт, появляется полоса
+прокрутки, и экран «уезжает» вниз (видны только пустые строки под
+приглашением). Поэтому всем спанам, включая переводы строк, задаётся один
+и тот же `TextStyle.height`, а число строк считается по нему же — размер
+отрисовки совпадает с размером контейнера с точностью до пикселя.
 
 Отдельное скрытое `ft.TextField` нужно потому, что Flet в
 `page.on_keyboard_event` отдаёт только логические метки клавиш
 (латиница в верхнем регистре без раскладки) — настоящие символы, вставку
-из буфера и IME умеет только поле ввода.
+из буфера и IME умеет только поле ввода. Событие клавиатуры Flet получает
+глобальным `HardwareKeyboard.addHandler` (см. `page.dart`), поэтому оно
+приходит и когда поле в фокусе: сессия отличает «печатаемые» клавиши поля
+от служебных по `input_focused`.
 """
 from __future__ import annotations
 
@@ -30,7 +42,7 @@ MONO_FONT = "JetBrains Mono"
 #: Доля ширины знакоместа от кегля (JetBrains Mono — 0.6em).
 MONO_ASPECT = 0.6
 
-#: Высота строки как множитель кегля.
+#: Высота строки как множитель кегля (`TextStyle.height`).
 MONO_LINE_HEIGHT = 1.25
 
 #: Атрибуты пустой ячейки: (fg, bg, italics, underscore, strikethrough).
@@ -47,6 +59,7 @@ class TerminalView:
         self,
         on_bytes: Callable[[bytes], None],
         on_resize: Callable[[int, int], None] | None = None,
+        on_focus_request: Callable[[], None] | None = None,
         *,
         font_family: str = MONO_FONT,
         font_size: int = 13,
@@ -56,6 +69,7 @@ class TerminalView:
     ) -> None:
         self._on_bytes = on_bytes
         self._on_resize = on_resize
+        self._on_focus_request = on_focus_request
         self._font_family = font_family
         self._font_size = font_size
         self._padding = padding
@@ -66,6 +80,7 @@ class TerminalView:
         self._input_bridge = TextInputBridge()
         self._styles: dict[tuple, ft.TextStyle] = {}
         self._size: tuple[int, int] | None = None
+        self._input_focused = False
         self._text: ft.Text | None = None
         self._input: ft.TextField | None = None
         self._control: ft.Container | None = None
@@ -78,6 +93,23 @@ class TerminalView:
         return self._input is not None
 
     @property
+    def input_focused(self) -> bool:
+        """True, пока клавиатурный фокус в скрытом поле ввода.
+
+        Пока поле в фокусе, печатаемые символы приходят из его IME-значения
+        (кириллица, регистр), а `KeyboardEvent` отдаёт те же клавиши
+        повторно — их надо игнорировать. Пока фокуса нет, те же символы
+        приходится брать из диспетчера (латиница, US-раскладка): терять ввод
+        хуже, чем вводить его без кириллицы.
+        """
+        return self._input_focused
+
+    @property
+    def size(self) -> tuple[int, int] | None:
+        """Последняя разосланная сетка (колонки, строки) или None."""
+        return self._size
+
+    @property
     def control(self) -> ft.Control:
         """Строит (один раз) контейнер терминала с экраном и полем ввода."""
         if self._control is None:
@@ -85,8 +117,9 @@ class TerminalView:
                 value="",
                 font_family=self._font_family,
                 size=self._font_size,
+                style=ft.TextStyle(height=MONO_LINE_HEIGHT),
                 no_wrap=True,
-                spans=[ft.TextSpan(text=" ")],
+                spans=[ft.TextSpan(text=" ", style=self._style(BLANK))],
             )
             self._input = ft.TextField(
                 value="",
@@ -100,24 +133,20 @@ class TerminalView:
                 autofocus=True,
                 on_change=self._on_field_change,
                 on_submit=self._on_field_submit,
+                on_focus=self._on_field_focus,
+                on_blur=self._on_field_blur,
             )
             self._control = ft.Container(
                 bgcolor=DEFAULT_BG,
                 padding=self._padding,
                 expand=True,
+                clip_behavior=ft.ClipBehavior.HARD_EDGE,
                 on_size_change=self._on_size_change,
+                on_click=self._on_click,
                 content=ft.Stack(
                     expand=True,
-                    controls=[
-                        ft.ListView(
-                            [self._text],
-                            expand=True,
-                            auto_scroll=True,
-                            spacing=0,
-                            padding=0,
-                        ),
-                        self._input,
-                    ],
+                    fit=ft.StackFit.LOOSE,
+                    controls=[self._text, self._input],
                 ),
             )
         return self._control
@@ -135,12 +164,16 @@ class TerminalView:
             pass  # Контрол ещё не примонтирован к странице.
 
     def spans(self, screen: PyteScreen) -> list[ft.TextSpan]:
-        """Строит спаны экрана: цветные «прогоны» ячеек и блок курсора."""
+        """Строит спаны экрана: цветные «прогоны» ячеек и блок курсора.
+
+        Строк получается ровно `screen.lines`: переводы строк задаются
+        спанами с тем же `height`, поэтому высота отрисовки предсказуема.
+        """
         cursor = screen.cursor
         spans: list[ft.TextSpan] = []
         for y in range(screen.lines):
             if y:
-                spans.append(ft.TextSpan(text="\n"))
+                spans.append(ft.TextSpan(text="\n", style=self._style(BLANK)))
             cells = screen.row(y)
             specs = [self.spec(cell) for cell in cells]
             limit = len(specs)
@@ -153,7 +186,7 @@ class TerminalView:
                 specs = self._with_cursor(specs, x)
                 limit = max(limit, x + 1)
             self._append_runs(spans, cells, specs, limit)
-        return spans or [ft.TextSpan(text=" ")]
+        return spans or [ft.TextSpan(text=" ", style=self._style(BLANK))]
 
     @staticmethod
     def spec(cell) -> tuple:  # noqa: ANN001 — pyte.screens.Char
@@ -190,7 +223,12 @@ class TerminalView:
             index = end
 
     def _style(self, spec: tuple) -> ft.TextStyle:
-        """Стиль Flet для набора атрибутов (с кешем, чтобы не плодить объекты)."""
+        """Стиль Flet для набора атрибутов (с кешем, чтобы не плодить объекты).
+
+        Шрифт, кегль и `height` задаются явно у каждого спана: переводы строк
+        и любые «бесстилевые» вставки не должны получать другую высоту
+        строки, иначе сетка съезжает и отрисовка перестаёт влезать в контейнер.
+        """
         style = self._styles.get(spec)
         if style is not None:
             return style
@@ -203,6 +241,9 @@ class TerminalView:
         elif strikethrough:
             decoration = ft.TextDecoration.LINE_THROUGH
         style = ft.TextStyle(
+            font_family=self._font_family,
+            size=self._font_size,
+            height=MONO_LINE_HEIGHT,
             color=fg,
             bgcolor=None if bg == DEFAULT_BG else bg,
             italic=italics,
@@ -232,6 +273,19 @@ class TerminalView:
         self.clear_input()
         self._on_bytes(b"\r")
 
+    def _on_field_focus(self, event: ft.ControlEvent) -> None:
+        """Помечает, что печатаемые символы приходят из поля (IME)."""
+        self._input_focused = True
+
+    def _on_field_blur(self, event: ft.ControlEvent) -> None:
+        """Фокус ушёл: печатаемые клавиши снова обрабатывает диспетчер."""
+        self._input_focused = False
+
+    def _on_click(self, event: ft.ControlEvent) -> None:
+        """Клик по терминалу возвращает фокус скрытому полю ввода."""
+        if self._on_focus_request is not None:
+            self._on_focus_request()
+
     def clear_input(self) -> None:
         """Очищает поле ввода, чтобы оно отдавало по одному вводу за раз."""
         self._input_bridge.reset()
@@ -250,7 +304,8 @@ class TerminalView:
         try:
             await self._input.focus()
         except RuntimeError:
-            pass  # Контрол ещё не примонтирован к странице.
+            return  # Контрол ещё не примонтирован к странице.
+        self._input_focused = True
 
     # --- Размер ---
 
@@ -260,6 +315,10 @@ class TerminalView:
             return
         width = float(getattr(event, "width", 0) or 0)
         height = float(getattr(event, "height", 0) or 0)
+        if width <= 0 or height <= 0:
+            # Контейнер ещё не разложен: `min_columns x min_lines` схлопнули бы
+            # окно PTY и заставили шелл перерисовать подсказку в 4 строки.
+            return
         columns = max(
             self._min_columns,
             int(max(width - 2 * self._padding, 0) // self._char_width),

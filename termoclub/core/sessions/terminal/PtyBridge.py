@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import select
 import signal
 
 logger = logging.getLogger(__name__)
@@ -18,10 +19,15 @@ except ImportError:  # Windows: модуля pty нет
 class PtyBridge:
     """Владеет PTY-процессом: запуск, запись, чтение, завершение.
 
-    Чтение — через `run_in_executor`, поэтому pump не блокирует UI-цикл.
+    Чтение — через `run_in_executor`, поэтому pump не блокирует UI-цикл;
+    само ожидание внутри потока — короткими `select`, чтобы pump отзывался
+    на `request_stop()`/`terminate()` (блокирующий `os.read` не разбудить).
     Поддерживаются Linux/macOS; на других платформах `start()` бросает
     `OSError` с понятным текстом.
     """
+
+    #: Таймаут ожидания читаемости PTY (шаг проверки stop-флага).
+    READ_POLL_TIMEOUT = 0.1
 
     def __init__(
         self,
@@ -85,13 +91,29 @@ class PtyBridge:
         fd = self._master_fd
         while not self._stop.is_set():
             try:
-                chunk = await loop.run_in_executor(None, os.read, fd, 65536)
+                chunk = await loop.run_in_executor(None, self._read_chunk, fd)
             except OSError:
                 break
+            if chunk is None:  # таймаут: данных нет, перепроверяем stop
+                continue
             if not chunk:  # EOF: дочерний процесс завершился
                 break
             on_data(chunk)
         logger.info("PtyBridge: pump finished (pid=%s)", self._child_pid)
+
+    @classmethod
+    def _read_chunk(cls, fd: int) -> bytes | None:
+        """Ждёт данные на fd и читает чанк (None — если их не дождались).
+
+        Ждать обязательно через `select`: поток executor'а, застрявший в
+        блокирующем `os.read`, не разбудить ни закрытием fd, ни выходом
+        шелла — каждый закрытый терминал оставлял бы висеть поток, а
+        `asyncio.run()` — ждать его на shutdown.
+        """
+        ready, _, _ = select.select([fd], [], [], cls.READ_POLL_TIMEOUT)
+        if not ready:
+            return None
+        return os.read(fd, 65536)
 
     def resize(self, cols: int, rows: int) -> None:
         """Меняет размер окна PTY (шелл получает SIGWINCH)."""
@@ -106,18 +128,15 @@ class PtyBridge:
         self._stop.set()
 
     def terminate(self) -> None:
-        """Убивает дочерний процесс и закрывает PTY (синхронно)."""
+        """Убивает дочерний процесс и закрывает PTY (синхронно).
+
+        Одного SIGTERM мало: интерактивный `bash` его игнорирует, и закрытая
+        вкладка оставляла бы живой шелл навсегда. Поэтому посылаем SIGHUP
+        (штатное «повесить трубку» для терминала), затем SIGKILL, и только
+        потом закрываем master-fd.
+        """
         self._stop.set()
-        if self._child_pid is not None:
-            try:
-                os.kill(self._child_pid, signal.SIGTERM)
-            except (OSError, ProcessLookupError):
-                pass
-            try:
-                os.waitpid(self._child_pid, os.WNOHANG)
-            except (OSError, ChildProcessError):
-                pass
-            self._child_pid = None
+        self._kill_child()
         if self._master_fd is not None:
             try:
                 os.close(self._master_fd)
@@ -126,6 +145,25 @@ class PtyBridge:
             self._master_fd = None
         self._started = False
         logger.info("PtyBridge: terminated")
+
+    def _kill_child(self) -> None:
+        """Гасит дочерний процесс и всю его группу (сессия pty)."""
+        pid = self._child_pid
+        self._child_pid = None
+        if pid is None:
+            return
+        for sig in (signal.SIGHUP, signal.SIGKILL):
+            # Процесс после `pty.fork()` — лидер сессии, поэтому группа
+            # совпадает с pid: так гасятся и его потомки.
+            for target in (os.killpg, os.kill):
+                try:
+                    target(pid, sig)
+                except (OSError, ProcessLookupError):
+                    pass
+        try:
+            os.waitpid(pid, os.WNOHANG)
+        except (OSError, ChildProcessError):
+            pass
 
     def _set_winsize(self, fd: int) -> None:
         try:

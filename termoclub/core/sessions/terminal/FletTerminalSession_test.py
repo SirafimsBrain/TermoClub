@@ -2,9 +2,11 @@
 """Тесты сессии внутреннего терминала (без страницы)."""
 from __future__ import annotations
 
+import asyncio
 from types import SimpleNamespace
 
 import flet as ft
+import pytest
 
 from core.sessions.SessionStatus import SessionStatus
 from core.sessions.terminal.FletTerminalSession import FletTerminalSession
@@ -51,13 +53,13 @@ def test_initial_state_and_content() -> None:
     assert session.get_content() is first
 
 
-def test_start_registers_pump_task() -> None:
-    """start() переводит в RUNNING и планирует pump через page."""
+def test_start_registers_pump_and_renderer_check() -> None:
+    """start() переводит в RUNNING и планирует pump + проверку рендерера."""
     session = FletTerminalSession()
     page = _FakePage()
     session.start(page)  # type: ignore[arg-type]
     assert session.status == SessionStatus.RUNNING
-    assert len(page.tasks) == 1
+    assert len(page.tasks) == 2
 
 
 def test_focus_blur_transitions() -> None:
@@ -111,3 +113,86 @@ def test_string_input_fallback_writes_to_bridge() -> None:
     session._on_terminal_data(SimpleNamespace(data="ok"))
     session._on_terminal_data(SimpleNamespace(data=""))
     assert written == [b"ok"]
+
+
+def test_resize_event_sizes_the_pty() -> None:
+    """Размер PTY берётся из on_resize xterm.dart, а не из пикселей."""
+    session = FletTerminalSession()
+    session.get_content()
+    resized: list[tuple[int, int]] = []
+    session._bridge.resize = lambda c, l: resized.append((c, l))  # type: ignore[method-assign]
+    session._on_terminal_resize(SimpleNamespace(data='{"cols": 100, "rows": 30}'))
+    session._on_terminal_resize(SimpleNamespace(data="not json"))
+    session._on_terminal_resize(SimpleNamespace(data='{"cols": 0, "rows": 30}'))
+    assert resized == [(100, 30)]
+
+
+def test_copy_shortcuts_copy_the_selection() -> None:
+    """Ctrl+Shift+C и Ctrl+Insert кладут выделение xterm в буфер."""
+    session = FletTerminalSession()
+    session.get_content()
+    page = _FakePage()
+    session._page = page  # type: ignore[assignment]
+    assert session.handle_key(_key("C", ctrl=True, shift=True)) is True
+    assert session.handle_key(_key("Insert", ctrl=True)) is True
+    assert [handler for handler, _ in page.tasks] == [
+        session._copy_selection,
+        session._copy_selection,
+    ]
+
+
+def test_ctrl_c_is_left_to_the_shell() -> None:
+    """Обычный Ctrl+C — сигнал для шелла, а не копирование."""
+    session = FletTerminalSession()
+    session.get_content()
+    assert session.handle_key(_key("c", ctrl=True)) is False
+
+
+def test_missing_dart_control_is_reported(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    """Без Dart-расширения сессия честно сообщает, что рендерить нечем."""
+    monkeypatch.setattr(FletTerminalSession, "MOUNT_TIMEOUT", 0.01)
+    events: list[str] = []
+    session = FletTerminalSession(on_renderer_missing=events.append)
+
+    class _LivePage:
+        def run_task(self, handler, *args):  # type: ignore[no-untyped-def]
+            return asyncio.ensure_future(handler(*args))
+
+    async def idle() -> None:
+        await asyncio.sleep(30)
+
+    monkeypatch.setattr(session, "_run", idle)
+
+    async def scenario() -> None:
+        session.start(_LivePage())  # type: ignore[arg-type]
+        await asyncio.sleep(0.1)
+
+    asyncio.run(scenario())
+    session.cleanup()
+    assert len(events) == 1
+    assert "flet build" in events[0]
+
+
+def test_mounted_control_silences_the_check(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    """Если контрол смонтировался, ничего сообщать не надо."""
+    monkeypatch.setattr(FletTerminalSession, "MOUNT_TIMEOUT", 0.01)
+    events: list[str] = []
+    session = FletTerminalSession(on_renderer_missing=events.append)
+
+    class _LivePage:
+        def run_task(self, handler, *args):  # type: ignore[no-untyped-def]
+            return asyncio.ensure_future(handler(*args))
+
+    async def idle() -> None:
+        await asyncio.sleep(30)
+
+    monkeypatch.setattr(session, "_run", idle)
+
+    async def scenario() -> None:
+        session.start(_LivePage())  # type: ignore[arg-type]
+        session._on_terminal_mount(None)  # type: ignore[arg-type]
+        await asyncio.sleep(0.1)
+
+    asyncio.run(scenario())
+    session.cleanup()
+    assert events == []

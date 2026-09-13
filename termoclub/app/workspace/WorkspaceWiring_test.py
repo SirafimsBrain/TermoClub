@@ -34,6 +34,66 @@ def _tabs(app: TermoClubApp) -> list:
     return [c for c in app.tab_bar._row.controls if isinstance(c, ft.Container)]
 
 
+def _rendered(item) -> str:  # type: ignore[no-untyped-def]
+    """Собирает текст, который реально уходит в спаны экрана терминала."""
+    return "".join(span.text or "" for span in item._view._text.spans)
+
+
+def test_both_terminal_renderers_open_in_tabs() -> None:
+    """В workspace открываются оба терминала: pyte и flet-terminal.
+
+    Рендереры должны быть вызываемыми по отдельности — иначе непонятно,
+    какой терминал открывает кнопка.
+    """
+    app = TermoClubApp(_StubPage())  # type: ignore[arg-type]
+    pyte = app.manager.open("terminal", title="Terminal (pyte)")
+    gpu = app.manager.open("terminal-gpu", title="Terminal (flet)")
+    app._refresh_workspace()
+
+    assert [i.title for i in app.manager.sessions] == [
+        "Terminal (pyte)",
+        "Terminal (flet)",
+    ]
+    assert [i.kind for i in app.manager.sessions] == ["terminal", "terminal-gpu"]
+    assert len(_tabs(app)) == 2
+    assert len(app.stage._stack.controls) == 2
+
+    app.manager.close(gpu.session_id)
+    app.manager.close(pyte.session_id)
+    assert app.manager.sessions == []
+
+
+def test_first_prompt_is_rendered_as_a_full_grid() -> None:
+    """Приглашение шелла отрисовано, а сетка влезает во вьюпорт по строкам.
+
+    Раньше экран прокручивался к низу и показывал только пустые строки —
+    ни приглашения, ни места для ввода.
+    """
+    if os.name == "nt":
+        pytest.skip("PTY is not supported on Windows")
+
+    async def scenario() -> None:
+        page = _StubPage()
+        app = TermoClubApp(page)  # type: ignore[arg-type]
+        app.start()
+        item = app.manager.open("terminal", page)  # type: ignore[arg-type]
+        await asyncio.wait_for(_wait_prompt(item), timeout=10)
+
+        rendered = _rendered(item)
+        assert "#" in rendered or "$" in rendered
+        # Строк ровно столько, сколько в сетке: лишние уехали бы в скролл.
+        assert rendered.count("\n") == item._screen.lines - 1
+        app.manager.close(item.session_id)
+
+    asyncio.run(scenario())
+
+
+async def _wait_prompt(item) -> None:  # type: ignore[no-untyped-def]
+    """Ждёт, пока приглашение доедет именно до отрисовки, а не только до pyte."""
+    while not any(mark in _rendered(item) for mark in "#$"):
+        await asyncio.sleep(0.02)
+
+
 def test_open_syncs_tabs_stage_cards() -> None:
     """Открытие сессии отражается во вкладках, сцене и карточках."""
     app = TermoClubApp(_StubPage())  # type: ignore[arg-type]
@@ -87,9 +147,12 @@ def test_text_input_roundtrip() -> None:
         app.start()
         item = app.manager.open("terminal", page, shell="/bin/cat", args=[])  # type: ignore[arg-type]
         await asyncio.wait_for(_wait_running(item), timeout=10)
+        item._view._on_field_focus(None)  # autofocus скрытого поля
         item._view._on_field_change(_change("привет"))
         await asyncio.wait_for(_wait_text(item, "привет"), timeout=10)
         assert "привет" in item.display_text
+        # Экран обновляется по троттлингу (хвостовой отрисовкой) — ждём её.
+        await asyncio.wait_for(_wait_rendered(item, "привет"), timeout=10)
         # Диспетчер молчит: символы не дублируются.
         app._on_page_key(_key("a"))
         assert item.display_text.count("привет") == 1
@@ -105,4 +168,9 @@ async def _wait_running(item) -> None:  # type: ignore[no-untyped-def]
 
 async def _wait_text(item, needle: str) -> None:  # type: ignore[no-untyped-def]
     while needle not in item.display_text:
+        await asyncio.sleep(0.02)
+
+
+async def _wait_rendered(item, needle: str) -> None:  # type: ignore[no-untyped-def]
+    while needle not in _rendered(item):
         await asyncio.sleep(0.02)

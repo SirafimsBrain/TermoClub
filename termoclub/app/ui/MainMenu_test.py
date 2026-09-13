@@ -96,9 +96,18 @@ def test_settings_has_nested_preferences_submenu() -> None:
 
 
 def test_internal_terminal_triggers_callback() -> None:
-    """Internal Terminal opens a workspace session via callback."""
+    """Internal Terminal (pyte) opens a workspace session via callback."""
     calls: list[bool] = []
     bar = MainMenu(on_new_session=lambda: calls.append(True)).build()
     assert isinstance(bar, ft.MenuBar)
-    _click_by_label(bar, "Internal Terminal")
+    _click_by_label(bar, "Internal Terminal (pyte)")
+    assert calls == [True]
+
+
+def test_internal_gpu_terminal_triggers_callback() -> None:
+    """Internal Terminal (flet-terminal) opens the GPU renderer session."""
+    calls: list[bool] = []
+    bar = MainMenu(on_new_gpu_session=lambda: calls.append(True)).build()
+    assert isinstance(bar, ft.MenuBar)
+    _click_by_label(bar, "Internal Terminal (flet-terminal)")
     assert calls == [True]

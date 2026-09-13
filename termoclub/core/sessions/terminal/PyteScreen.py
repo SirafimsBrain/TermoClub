@@ -67,6 +67,17 @@ class PyteScreen:
         """Видимый экран как текст (для тестов, логов и отладки)."""
         return "\n".join(self._screen.display)
 
+    def visible_text(self) -> str:
+        """Видимый экран без пустых полей — то, что имеет смысл копировать.
+
+        У каждой строки срезаются правые пробелы (в терминале строка
+        добивается ими до ширины экрана), а пустые строки снизу отбрасываются.
+        """
+        lines = [line.rstrip() for line in self._screen.display]
+        while lines and not lines[-1]:
+            lines.pop()
+        return "\n".join(lines)
+
     def row(self, y: int) -> Sequence[pyte.screens.Char]:
         """Ячейки строки `y` (длиной `columns`, пустые — пробелы)."""
         buffer = self._screen.buffer[y]

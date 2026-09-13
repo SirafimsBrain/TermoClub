@@ -17,9 +17,20 @@
   (диспетчер в `main.py`) — для них метки достаточно;
 * настоящие символы (кириллица, регистр, AltGr, IME, вставка) — только из
   скрытого поля ввода `TerminalView`.
+
+Flet подписывается на клавиатуру глобальным `HardwareKeyboard.addHandler`
+(`page.dart`), поэтому событие приходит и при сфокусированном поле: каналы
+различаются по `TerminalView.input_focused`, иначе каждый символ дублировался
+бы.
+
+Буфер обмена: `Ctrl+V`/`Shift+Insert` вставляют (при сфокусированном поле —
+силами самого поля), `Ctrl+Shift+V` — через `ft.Clipboard`; `Ctrl+Shift+C` и
+`Ctrl+Insert` копируют видимую область экрана. Обычный `Ctrl+C` остаётся
+SIGINT для шелла.
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 from collections.abc import Callable
@@ -61,11 +72,16 @@ class TerminalSession(WorkspaceItem):
         super().__init__(title, session_id)
         self._bridge = PtyBridge(shell=shell, args=args, cwd=cwd, cols=cols, rows=rows)
         self._screen = PyteScreen(cols, rows)
-        self._view = TerminalView(on_bytes=self._send_input, on_resize=self.resize)
+        self._view = TerminalView(
+            on_bytes=self._send_input,
+            on_resize=self.resize,
+            on_focus_request=self.focus_input,
+        )
         self._page: ft.Page | None = None
         self._clipboard = None
         self._last_refresh = 0.0
         self._pump_future = None
+        self._refresh_task = None
         self.on_terminated = on_terminated
 
     @property
@@ -103,19 +119,28 @@ class TerminalSession(WorkspaceItem):
             self.on_terminated(self.session_id)
 
     def get_content(self) -> ft.Control:
-        """Строит (один раз) контролы терминала вью."""
+        """Строит (один раз) контролы терминала вью.
+
+        Сразу после сборки экран рисуется из текущего буфера: приглашение
+        шелла успевает прийти до монтирования контрола, а новых данных от
+        PTY может уже не быть (`bash` ждёт ввода) — без этой отрисовки
+        терминал оставался бы пустым.
+        """
         if self._content is None:
             self._content = self._view.control
+            self._refresh(force=True)
         return self._content
 
     def cleanup(self) -> None:
         """Отменяет pump, убивает PTY (синхронно)."""
-        if self._pump_future is not None:
-            try:
-                self._pump_future.cancel()
-            except RuntimeError:
-                pass
-            self._pump_future = None
+        for future in (self._pump_future, self._refresh_task):
+            if future is not None:
+                try:
+                    future.cancel()
+                except RuntimeError:
+                    pass
+        self._pump_future = None
+        self._refresh_task = None
         self._bridge.request_stop()
         self._bridge.terminate()
         self._refresh(force=True)
@@ -135,9 +160,26 @@ class TerminalSession(WorkspaceItem):
     def _refresh(self, force: bool = False) -> None:
         now = time.monotonic()
         if not force and now - self._last_refresh < self.REFRESH_MIN_INTERVAL:
+            self._schedule_refresh()
             return
         self._last_refresh = now
         self._view.render(self._screen)
+
+    def _schedule_refresh(self) -> None:
+        """Планирует отрисовку, если чанк вывода попал в окно троттлинга.
+
+        Без этого хвост вывода (например, приглашение шелла) остаётся
+        только в буфере pyte и ждёт следующего чанка, которого может и не
+        быть — шелл просто ждёт ввода, а экран остаётся пустым.
+        """
+        if self._refresh_task is not None or self._page is None:
+            return
+        self._refresh_task = self._page.run_task(self._flush_refresh)
+
+    async def _flush_refresh(self) -> None:
+        await asyncio.sleep(self.REFRESH_MIN_INTERVAL)
+        self._refresh_task = None
+        self._refresh(force=True)
 
     # --- Размер ---
 
@@ -154,11 +196,22 @@ class TerminalSession(WorkspaceItem):
     # --- Ввод: служебные клавиши через page.on_keyboard_event ---
 
     def handle_key(self, event: ft.KeyboardEvent) -> bool:
-        """Отправляет клавишу в PTY. True, если клавиша поглощена."""
-        if self._is_own_paste(event):
+        """Отправляет клавишу в PTY. True, если клавиша поглощена.
+
+        Событие приходит всегда (глобальный обработчик Flet), в том числе
+        когда фокус в скрытом поле ввода. Печатаемые символы при этом уже
+        уходят из IME поля, поэтому здесь они игнорируются — иначе каждый
+        символ дублировался бы. Без фокуса поле молчит, и символы берёт на
+        себя диспетчер клавиш (латиница, US-раскладка).
+        """
+        if self._is_paste_shortcut(event):
             self.paste()
             return True
-        if self._belongs_to_text_field(event):
+        if self._is_copy_shortcut(event):
+            self.copy()
+            return True
+        focused = self._input_focused()
+        if focused and self._belongs_to_text_field(event):
             return False
         data = TerminalKeymap.to_bytes(
             event.key,
@@ -170,42 +223,95 @@ class TerminalSession(WorkspaceItem):
         if data is None:
             return False
         self._bridge.write(data)
-        if event.key == "Tab":
-            self.focus_input()  # Tab уводит фокус из поля ввода — возвращаем.
+        if not focused or event.key == "Tab":
+            # Tab уводит фокус из поля, а без фокуса кириллицу печатать нечем.
+            self.focus_input()
         return True
+
+    def _input_focused(self) -> bool:
+        """True, когда скрытое поле ввода смонтировано и держит фокус."""
+        return self._view.input_ready and self._view.input_focused
 
     def _belongs_to_text_field(self, event: ft.KeyboardEvent) -> bool:
         """True, если ввод придёт из скрытого поля, а не из KeyboardEvent.
 
-        Без поля ввода (например, до `get_content()`) деградируем к
-        старому поведению: печатаемые символы обрабатывает диспетчер.
+        Кроме печатаемых символов сюда попадают штатные «вставочные»
+        комбинации самого поля: `Ctrl+V` и `Shift+Insert`. Иначе `Ctrl+V`
+        ушёл бы в PTY как `0x16`, да ещё и вставился через IME — двойной ввод.
         """
-        if not self._view.input_ready:
-            return False
-        # Ctrl/⌘+V вставляет текст средствами самого поля ввода (Shift-вариант
-        # перехватывает сама сессия — см. `_is_own_paste`).
-        if event.key.upper() == "V" and (event.ctrl or event.meta):
+        modified = event.ctrl or event.meta
+        if event.key.upper() == "V" and modified and not event.shift:
             return True
-        if event.key == "Insert":
-            return event.shift
-        # Управляющие комбинации символов в поле не печатаются.
-        if event.ctrl or event.meta:
+        if event.key == "Insert" and event.shift:
+            return True
+        if modified:
             return False
+        # Enter приходит в on_submit, пробел и остальные печатаемые символы —
+        # в значение поля; остальное (Backspace, стрелки, Tab, Escape, F-клавиши)
+        # обрабатывает диспетчер.
         return event.key in self.TEXT_FIELD_KEYS or len(event.key) == 1
 
-    def _is_own_paste(self, event: ft.KeyboardEvent) -> bool:
-        """Ctrl/⌘+Shift+V — а без поля ввода ещё Ctrl/⌘+V и Shift+Insert.
+    def _is_paste_shortcut(self, event: ft.KeyboardEvent) -> bool:
+        """Вставка, которую сессия берёт на себя.
 
-        Обычные `Ctrl+V` и `Shift+Insert` намеренно не перехватываются: их
-        обрабатывает само поле ввода, иначе вставка случилась бы дважды.
+        `Ctrl+V` и `Shift+Insert` при сфокусированном поле обрабатывает само
+        поле, иначе вставка случилась бы дважды. Без фокуса и всегда для
+        `Ctrl+Shift+V` читаем буфер через `ft.Clipboard`.
         """
+        if not (event.ctrl or event.meta or event.shift):
+            return False
+        focused = self._input_focused()
         if event.key == "Insert":
-            return event.shift and not self._view.input_ready
+            return event.shift and not focused
         if event.key.upper() != "V" or not (event.ctrl or event.meta):
             return False
-        return event.shift or not self._view.input_ready
+        return event.shift or not focused
+
+    def _is_copy_shortcut(self, event: ft.KeyboardEvent) -> bool:
+        """Копирование в буфер: `Ctrl+Shift+C` и `Ctrl+Insert`.
+
+        Обычный `Ctrl+C` намеренно не перехватывается: это SIGINT для шелла.
+        """
+        if not (event.ctrl or event.meta):
+            return False
+        if event.key == "Insert":
+            return True
+        return event.shift and event.key.upper() == "C"
 
     # --- Буфер обмена ---
+
+    def copy_text(self) -> str:
+        """Что попадает в буфер обмена: видимая область экрана без пустых полей."""
+        return self._screen.visible_text()
+
+    def copy(self) -> None:
+        """Кладёт видимую область терминала в системный буфер обмена."""
+        if self._page is None:
+            logger.warning(
+                "TerminalSession %s: no page for clipboard copy", self.session_id
+            )
+            return
+        text = self.copy_text()
+        if not text:
+            return
+        try:
+            self._page.run_task(self._copy_to_clipboard, text)
+        except (AttributeError, RuntimeError):
+            logger.warning(
+                "TerminalSession %s: clipboard copy is not available", self.session_id
+            )
+
+    async def _copy_to_clipboard(self, text: str) -> None:
+        try:
+            if self._clipboard is None:
+                self._clipboard = ft.Clipboard()
+            await self._clipboard.set(text)
+        except Exception:  # noqa: BLE001 — сервис буфера есть не на всех платформах
+            logger.warning(
+                "TerminalSession %s: clipboard is not writable", self.session_id
+            )
+            return
+        logger.info("TerminalSession %s: copied %d chars", self.session_id, len(text))
 
     def paste(self) -> None:
         """Просит вставить в PTY текст из системного буфера обмена."""

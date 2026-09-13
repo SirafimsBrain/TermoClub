@@ -10,10 +10,16 @@ class WorkspaceStage:
 
     Переключение вкладок только меняет `visible`, поэтому состояние
     (например, буфер xterm) переживает смену фокуса.
+
+    `StackFit.EXPAND` обязателен: при `StackFit.LOOSE` (умолчание Flet)
+    контейнер вкладки получает свободные ограничения и сжимается до размера
+    содержимого. Для терминала это смертельно — его сетка выводит колонки и
+    строки исходя из собственного размера, то есть контент начинает
+    «растить» контейнер, и терминал разъезжается.
     """
 
     def __init__(self) -> None:
-        self._stack = ft.Stack(expand=True)
+        self._stack = ft.Stack(expand=True, fit=ft.StackFit.EXPAND)
         self._mounted: dict[str, ft.Control] = {}
 
     def mount(self, session_id: str, control: ft.Control, visible: bool) -> None:
