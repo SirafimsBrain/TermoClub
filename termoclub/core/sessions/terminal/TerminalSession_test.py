@@ -216,6 +216,53 @@ def test_resize_updates_screen_and_pty() -> None:
     assert resized == [(100, 30)]
 
 
+def test_cleanup_cancels_the_pending_resize() -> None:
+    """Хвостовая задача размера отменяется вместе с остальными."""
+    session = TerminalSession()
+    page = _FakePage()
+    session._page = page  # type: ignore[assignment]
+    session.get_content()
+    session.resize(100, 30)
+    assert session._resize_task is not None
+    session.cleanup()
+    assert session._resize_task is None
+    assert session.status == SessionStatus.CLOSED
+
+
+def test_resize_coalesces_the_layout_storm() -> None:
+    """Анимация панелей схлопывается в два изменения размера, не в десятки.
+
+    Первый размер применяется сразу (интерфейс отзывчив), остальные кадры
+    не рассылаются, а последний применяется хвостовой задачей — иначе один
+    toggle слал бы шеллу десятки SIGWINCH и столько же раз перерисовывал сетку.
+    """
+    session = TerminalSession()
+    page = _FakePage()
+    session._page = page  # type: ignore[assignment]
+    session.get_content()
+    resized: list[tuple[int, int]] = []
+    session._bridge.resize = lambda c, l: resized.append((c, l))  # type: ignore[method-assign]
+
+    session.resize(100, 30)
+    assert resized == [(100, 30)]
+    for columns in (110, 120, 130):
+        session.resize(columns, 30)
+    assert resized == [(100, 30)]
+    page.run_all()
+    assert resized == [(100, 30), (130, 30)]
+    assert (session._screen.columns, session._screen.lines) == (130, 30)
+
+
+def test_resize_before_mount_applies_immediately() -> None:
+    """Без page хвостовой задачи нет: размер применяется синхронно."""
+    session = TerminalSession()
+    session.get_content()
+    resized: list[tuple[int, int]] = []
+    session._bridge.resize = lambda c, l: resized.append((c, l))  # type: ignore[method-assign]
+    session.resize(100, 30)
+    assert resized == [(100, 30)]
+
+
 def test_focus_blur_transitions() -> None:
     """Фокус переключает RUNNING <-> FOCUSED (контрол не примонтирован)."""
     session = TerminalSession()

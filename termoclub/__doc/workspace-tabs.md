@@ -356,3 +356,129 @@ control: FletTerminal», и вкладка осталась бы пустой. �
   требует Flutter SDK (`flet build`), которого здесь нет. Логика сессии
   (размер из `on_resize`, вставка, копирование, сигнал об отсутствии
   контрола) покрыта тестами без GUI.
+
+## Implementation notes, round 6: smartcli-toolkit вместо flet-terminal
+
+Раунд 5 заменён: `flet-terminal` (терминал `terminal-gpu`) выброшен как
+неработоспособный, его место занял `smartcli-toolkit`. Устаревшие места
+выше — история, актуальное состояние ниже. Файл `FletTerminalSession.py`,
+его тест и зависимость `flet-terminal==0.3.6` удалены.
+
+### Симптомы
+
+Вкладка smartcli-терминала открывалась чёрной, а в GUI появлялась **ещё
+одна панель**, которая ни на что не реагировала.
+
+### Причины
+
+**1. Сессия писалась под несуществующий async-API.** Проверено против
+`smartcli_core` 0.2.3 (`session.py`, `screen_model.py`):
+
+| Вызов в коде | Реальность в smartcli 0.2.3 |
+| --- | --- |
+| `await PtySession.start(shell, args=, cwd=)` | синхронный `start(cmd)`, одна команда (`str`/`Sequence`), без `args`/`cwd` |
+| `async for data in PtySession.pump()` | синхронный неблокирующий `pump() -> bytes` |
+| `PtySession.send_signal("SIGINT")` | такого метода нет (управляющие — `send_keys(["C-c"])`) |
+| `Terminal.paste()` / `set_on_bytes` | не нужны: это API flet-terminal, а не smartcli |
+| `PtySession.terminate()` | `close()` |
+| `self._view.update()` | у `TerminalView` нет `update()` |
+| `page.get_clipboard_text()` / `set_clipboard_text()` | в Flet 0.86 это `ft.Clipboard()` с async `get()`/`set()` |
+
+Плюс `self._screen_model` не заводился в `__init__` (использовался в
+`resize()`/`cleanup()`), а pump запускался через `asyncio.ensure_future`
+вместо `page.run_task`. Запуск падал с `TypeError`/`AttributeError`.
+
+**2. Вторая панель в GUI.** `_setup_view()` вызывал
+`self._page.add(self._content)`: терминал добавлялся в **корень страницы**,
+рядом с `ApplicationLayout`. В этом проекте контент вкладки обязан
+приходить только из `get_content()`, а монтирует его `WorkspaceStage`.
+
+**3. Чёрное окно.** `TerminalView.render(...)` не вызывался ни разу:
+`ScreenModel` получал байты, но спаны `ft.Text` не обновлялись — оставался
+фоновый `DEFAULT_BG`. К тому же `TerminalView.render()` типизирован под
+`PyteScreen`, а не под `ScreenModel`.
+
+### Решение: движок как шов, а не копия сессии
+
+`TerminalSession` получил две фабрики — `_create_bridge()` и
+`_create_screen()`. `SmartCLITerminalSession` теперь наследник, который
+меняет только их: ввод, буфер обмена, троттлинг, фокус, размер и разметка
+общие, поэтому 400 строк копии исчезли, а поведение обоих рендеров
+совпадает по построению.
+
+| Класс / файл | Ответственность |
+| --- | --- |
+| `SmartCLIPtyBridge.py` | PTY через `smartcli_core.PtySession`; тот же интерфейс, что у `PtyBridge` (`start`/`pump`/`write`/`resize`/`request_stop`/`terminate` + `running`); отдаёт `.model` |
+| `SmartCLIScreen.py` | только чтение: `ScreenModel` под интерфейс `PyteScreen` (`lines`, `cursor` как `(x, y)`, `row(y)`, `resize`, `text`, `visible_text`) |
+| `SmartCLITerminalSession.py` | `TerminalSession` + `KIND = "terminal-gpu"`; ничего не добавляет на `page` |
+
+Тонкости, которые пришлось учесть:
+
+- `ScreenModel.cursor` отдаёт `(row, column)`, а `TerminalView` ждёт `(x, y)`
+  — поэтому адаптер, а не подмена. `row(y)` читает буфер pyte напрямую:
+  `row_cells()` возвращает урезанный `CellAttrs` (без курсива,
+  подчёркивания и зачёркивания) и строит NamedTuple на каждую ячейку.
+- `PtySession.pump()` сам кормит `ScreenModel` и отвечает на DSR/DA-запросы
+  программы, поэтому `SmartCLIScreen.feed_bytes()` — намеренный no-op:
+  второе кормление обработало бы каждый байт дважды.
+- `PtySession` создаётся в конструкторе моста, а спавнится в `start()`:
+  модель экрана нужна уже при сборке сессии (её оборачивает адаптер).
+- `cwd`/`env` у `PtySession.start()` не поддерживаются, поэтому при них
+  команда собирается строкой для `sh -c` с `shlex.quote`/`shlex.join`;
+  без них — прямой `execvp`.
+- `PtySession.close()` на **интерактивном** шелле блокирует ~1 с
+  (измерено: 1.02 с для `bash`, 0.02 с для `cat`): `PosixPtyBackend` шлёт
+  SIGTERM, который `bash` игнорирует, ждёт секунду и только затем SIGKILL.
+  `cleanup()` синхронный и вызывается из UI-потока, поэтому гашение уходит
+  в daemon-поток: закрытие вкладки занимает 0.008 с вместо 1 с.
+
+### Артефакты при ресайзе и выдвижных панелях
+
+**Причина.** Панели анимируются 300 мс (`animate=ft.Animation(300, ...)`),
+и каждый кадр менял ширину рабочей области → `on_size_change` контейнера
+терминала → `resize()` → `PyteScreen.resize()` + `PtyBridge.resize()`
+(TIOCSWINSZ → SIGWINCH) + принудительная перерисовка всей сетки. Одно
+открытие/закрытие панели давало до ~18 SIGWINCH и столько же полных
+перерисовок: отсюда рваная отрисовка, а шелл на каждый сигнал перерисовывал
+приглашение. Плюс `CollapsiblePanel` дёргал `page.update()` — полную
+пересборку окна, включая терминал, прямо во время анимации.
+
+**Решение.**
+
+- `TerminalSession.resize()` сначала применяет размер сразу (интерфейс
+  отзывчив), а остальные кадры склеивает и применяет одним хвостовым
+  изменением, когда раскладка успокоится (`RESIZE_DEBOUNCE = 0.12`),
+  с пределом ожидания `RESIZE_MAX_WAIT = 0.3` для непрерывного
+  перетаскивания окна.
+- `CollapsiblePanel` обновляет только свои контролы (`_update`), а не всю
+  страницу.
+- Нулевой размер контейнера по-прежнему игнорируется, повтор того же
+  размера не рассылается.
+
+**Измерено** (headless, реальный `bash`): 20 resize-событий за 300 мс →
+**2** вызова `bridge.resize` (18 SIGWINCH предотвращено), финальный размер
+применён.
+
+### Проверка
+
+`152 passed` (было 128): `SmartCLIScreen_test`, `SmartCLIPtyBridge_test`,
+переписанный `SmartCLITerminalSession_test`, новые тесты склейки размера в
+`TerminalSession_test` и сквозной `test_smartcli_terminal_renders_in_the_tab`
+(реальный PTY `/bin/cat` → `ScreenModel` → спаны экрана). Осознанно больше
+не проверяется ветка «Dart-расширение не примонтировалось»: она относилась к
+flet-terminal и вместе с ним удалена. Открытие сессии, упавшее в
+конструкторе (нет пакета, платформа без PTY), теперь показывает причину в
+статусной панели и снекбаром (`main._open_terminal`).
+
+### Ограничения (осознанные)
+
+- Управляющие комбинации по-прежнему идут через наш `TerminalKeymap`
+  (`Ctrl+C` → `0x03`), а не через `send_keys(["C-c"])` smartcli: так оба
+  рендера ведут себя одинаково и остаются под общими тестами. Побочный
+  эффект — не используются адаптивные SS3-стрелки smartcli для DECCKM
+  (`model.app_cursor`); для приложений вроде `vim`/`htop` это заметно.
+- `SmartCLIScreen.visible_text()` копирует видимую область целиком:
+  мышиного выделения в `ft.Text` нет (см. ограничения round 5).
+- GUI в этом окружении не запускается, поэтому проверка headless: сетка,
+  кириллица, размер и закрытие вкладки; визуально стоит проверить цвет,
+  курсор и ресайз окна в живом окне.

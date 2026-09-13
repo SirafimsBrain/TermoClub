@@ -27,6 +27,11 @@ Flet подписывается на клавиатуру глобальным `
 силами самого поля), `Ctrl+Shift+V` — через `ft.Clipboard`; `Ctrl+Shift+C` и
 `Ctrl+Insert` копируют видимую область экрана. Обычный `Ctrl+C` остаётся
 SIGINT для шелла.
+
+Движок (`PtyBridge` + `PyteScreen`) создаётся фабриками `_create_bridge()`
+и `_create_screen()`. Наследник подменяет только их — например,
+`SmartCLITerminalSession` берёт PTY и экран из smartcli-toolkit, — а вся
+логика ввода, буфера обмена, троттлинга и размера остаётся общей.
 """
 from __future__ import annotations
 
@@ -55,6 +60,12 @@ class TerminalSession(WorkspaceItem):
     #: Минимальный интервал перерисовки экрана (защита от UI-шторма).
     REFRESH_MIN_INTERVAL = 0.05
 
+    #: «Тишина» после последнего resize-события, прежде чем менять сетку (сек).
+    RESIZE_DEBOUNCE = 0.12
+
+    #: Предел ожидания при непрерывном изменении размера (сек).
+    RESIZE_MAX_WAIT = 0.3
+
     #: Клавиши, которые отдаются скрытому полю ввода (Enter -> on_submit).
     TEXT_FIELD_KEYS = frozenset({"Enter", " "})
 
@@ -70,8 +81,8 @@ class TerminalSession(WorkspaceItem):
         on_terminated: Callable[[str], None] | None = None,
     ) -> None:
         super().__init__(title, session_id)
-        self._bridge = PtyBridge(shell=shell, args=args, cwd=cwd, cols=cols, rows=rows)
-        self._screen = PyteScreen(cols, rows)
+        self._bridge = self._create_bridge(shell, args, cwd, cols, rows)
+        self._screen = self._create_screen(cols, rows)
         self._view = TerminalView(
             on_bytes=self._send_input,
             on_resize=self.resize,
@@ -82,6 +93,9 @@ class TerminalSession(WorkspaceItem):
         self._last_refresh = 0.0
         self._pump_future = None
         self._refresh_task = None
+        self._resize_task = None
+        self._pending_size: tuple[int, int] | None = None
+        self._pending_at = 0.0
         self.on_terminated = on_terminated
 
     @property
@@ -92,6 +106,27 @@ class TerminalSession(WorkspaceItem):
     def display_text(self) -> str:
         """Текущий видимый текст экрана (для тестов и отладки)."""
         return self._screen.text()
+
+    # --- Движок (фабрики для наследников) ---
+
+    def _create_bridge(
+        self,
+        shell: str | None,
+        args: list[str] | None,
+        cwd: str | None,
+        cols: int,
+        rows: int,
+    ) -> PtyBridge:
+        """Создаёт мост к PTY (по умолчанию — собственный `PtyBridge`)."""
+        return PtyBridge(shell=shell, args=args, cwd=cwd, cols=cols, rows=rows)
+
+    def _create_screen(self, columns: int, lines: int) -> PyteScreen:
+        """Создаёт экран терминала (по умолчанию — `PyteScreen`).
+
+        Вызывается после `_create_bridge()`, поэтому наследник может
+        построить экран поверх только что созданного моста.
+        """
+        return PyteScreen(columns, lines)
 
     # --- Жизненный цикл ---
 
@@ -133,7 +168,7 @@ class TerminalSession(WorkspaceItem):
 
     def cleanup(self) -> None:
         """Отменяет pump, убивает PTY (синхронно)."""
-        for future in (self._pump_future, self._refresh_task):
+        for future in (self._pump_future, self._refresh_task, self._resize_task):
             if future is not None:
                 try:
                     future.cancel()
@@ -141,6 +176,7 @@ class TerminalSession(WorkspaceItem):
                     pass
         self._pump_future = None
         self._refresh_task = None
+        self._resize_task = None
         self._bridge.request_stop()
         self._bridge.terminate()
         self._refresh(force=True)
@@ -184,7 +220,28 @@ class TerminalSession(WorkspaceItem):
     # --- Размер ---
 
     def resize(self, columns: int, lines: int) -> None:
-        """Подгоняет экран и окно PTY под новый размер (шелл получит SIGWINCH)."""
+        """Подгоняет экран и окно PTY под новый размер (шелл получит SIGWINCH).
+
+        Событие приходит на каждом кадре анимации выдвижных панелей (300 мс),
+        поэтому первый размер применяется сразу (интерфейс отзывчив), а
+        остальные — один раз, когда раскладка успокоится. Иначе одно
+        открытие/закрытие панели слало бы шеллу десятки SIGWINCH и столько же
+        раз перерисовывало всю сетку: отсюда были и рваная отрисовка, и
+        разъехавшееся приглашение шелла после каждого ресайза.
+        """
+        target = (columns, lines)
+        if target == self._pending_size:
+            return  # тот же размер: повтор кадров анимации
+        self._pending_size = target
+        self._pending_at = time.monotonic()
+        if self._resize_task is not None:
+            return  # хвостовое применение уже запланировано
+        self._apply_resize(columns, lines)
+        if self._page is not None:
+            self._resize_task = self._page.run_task(self._flush_resize)
+
+    def _apply_resize(self, columns: int, lines: int) -> None:
+        """Применяет размер к экрану и PTY (без ожидания «тишины»)."""
         if not self._screen.resize(columns, lines):
             return
         self._bridge.resize(columns, lines)
@@ -192,6 +249,27 @@ class TerminalSession(WorkspaceItem):
         logger.info(
             "TerminalSession %s: resized to %dx%d", self.session_id, columns, lines
         )
+
+    async def _flush_resize(self) -> None:
+        """Применяет последний размер, когда поток resize-событий иссяк.
+
+        Ждём «тишины» в `RESIZE_DEBOUNCE`, но не дольше `RESIZE_MAX_WAIT`:
+        анимация панелей (300 мс) схлопывается в одно применение, а
+        непрерывное перетаскивание окна всё равно обновляет сетку.
+        """
+        started = time.monotonic()
+        try:
+            while True:
+                await asyncio.sleep(self.RESIZE_DEBOUNCE)
+                if self._status == SessionStatus.CLOSED:
+                    return
+                quiet = time.monotonic() - self._pending_at >= self.RESIZE_DEBOUNCE
+                if quiet or time.monotonic() - started >= self.RESIZE_MAX_WAIT:
+                    break
+            if self._pending_size is not None:
+                self._apply_resize(*self._pending_size)
+        finally:
+            self._resize_task = None
 
     # --- Ввод: служебные клавиши через page.on_keyboard_event ---
 

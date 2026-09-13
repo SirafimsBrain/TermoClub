@@ -39,8 +39,8 @@ def _rdp(**kwargs) -> WorkspaceItem:
 
 
 _REGISTRY: dict[str, callable] = {
-    "terminal": _terminal,  # pyte-рендер, работает со stock-клиентом
-    "terminal-gpu": _terminal_gpu,  # smartcli-toolkit, нужен `flet build` (если используется флет-терминал) или зависит от smartcli-toolkit
+    "terminal": _terminal,  # pyte + Flet: чистый Python, работает в stock-клиенте
+    "terminal-gpu": _terminal_gpu,  # smartcli-toolkit: PTY и экран из smartcli_core
     "editor": _editor,
     "rdp": _rdp,
 }

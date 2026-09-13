@@ -7,7 +7,6 @@ import pytest
 from core.sessions.editor.EditorSession import EditorSession
 from core.sessions.rdp.RdpSession import RdpSession
 from core.sessions.SessionFactory import SessionFactory
-from core.sessions.terminal.FletTerminalSession import FletTerminalSession
 from core.sessions.terminal.SmartCLITerminalSession import SmartCLITerminalSession
 from core.sessions.terminal.TerminalSession import TerminalSession
 from core.sessions.WorkspaceItem import WorkspaceItem

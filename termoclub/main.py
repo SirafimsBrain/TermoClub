@@ -33,11 +33,12 @@ logger = logging.getLogger(__name__)
 ASSETS_DIR = Path(__file__).resolve().parent / "assets"
 
 #: Рендерер -> заголовок вкладки: в UI сразу видно, какой терминал открыт.
-#: `terminal` — pyte + Flet (stock-клиент), `terminal-gpu` — flet-terminal
-#: (Dart-расширение, нужен клиент из `flet build`).
+#: Оба варианта — чистый Python: `terminal` рисует pyte + Flet, `terminal-gpu`
+#: берёт PTY и эмуляцию экрана из smartcli-toolkit. Оба работают в
+#: stock-клиенте (`flet run`), без Dart-расширений и Flutter SDK.
 TERMINAL_TITLES = {
     "terminal": "Terminal (pyte)",
-    "terminal-gpu": "Terminal (flet)",
+    "terminal-gpu": "Terminal (smartcli)",
 }
 
 
@@ -89,18 +90,20 @@ class TermoClubApp:
         self.page.window.close()
 
     def _open_terminal(self, kind: str = "terminal") -> None:
-        """Открывает вкладку внутреннего терминала выбранного рендерера."""
-        title = TERMINAL_TITLES.get(kind, kind)
-        kwargs: dict = {}
-        if kind == "terminal-gpu":
-            # Без Dart-расширения вкладка будет пустой — сообщаем об этом явно.
-            kwargs["on_renderer_missing"] = self._on_renderer_missing
-        self.manager.open(kind, self.page, title=title, **kwargs)
+        """Открывает вкладку внутреннего терминала выбранного рендерера.
 
-    def _on_renderer_missing(self, message: str) -> None:
-        """Рендерер flet-terminal недоступен в текущем клиенте."""
-        self.set_status(message)
-        show_snack(self.page, message, is_error=True)
+        Сессия собирает движок в конструкторе, поэтому сбой (не установлен
+        smartcli-toolkit, платформа без PTY) приходит сюда с готовым текстом:
+        показываем его в статусной панели и снекбаром вместо пустой вкладки.
+        """
+        title = TERMINAL_TITLES.get(kind, kind)
+        try:
+            self.manager.open(kind, self.page, title=title)
+        except Exception as exc:  # noqa: BLE001 — пользователю нужен любой текст
+            logger.exception("Failed to open %s session", kind)
+            message = f"Не удалось открыть «{title}»: {exc}"
+            self.set_status(message)
+            show_snack(self.page, message, is_error=True)
 
     def _refresh_workspace(self) -> None:
         """Сверяет вкладки, сцену и карточки с состоянием менеджера."""

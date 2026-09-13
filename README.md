@@ -44,8 +44,8 @@ termoclub/
 │   └── state.py                    # Minimal app state
 ├── core/
 │   ├── sessions/                   # WorkspaceItem ABC, SessionFactory, terminal/editor/rdp
-│   │                               # (default terminal renders via pyte; `terminal-gpu`
-│   │                               # needs a `flet build` client with Flutter SDK)
+│   │                               # (both terminals are pure Python: `terminal` renders
+│   │                               # via pyte + Flet, `terminal-gpu` via smartcli-toolkit)
 │   ├── terminal/
 │   │   ├── base.py                 # Abstract TerminalController
 │   │   ├── factory.py              # Factory / registry

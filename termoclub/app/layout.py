@@ -80,26 +80,37 @@ class CollapsiblePanel:
             self.toggle_button.content.icon = (
                 ft.Icons.CHEVRON_LEFT if is_left else ft.Icons.CHEVRON_RIGHT
             )
-            self.toggle_button.bgcolor = ft.Colors.TRANSPARENT
         else:
             self.panel.width = 0.0
             self.toggle_button.content.icon = (
                 ft.Icons.CHEVRON_RIGHT if is_left else ft.Icons.CHEVRON_LEFT
             )
-            self.toggle_button.bgcolor = ft.Colors.TRANSPARENT
-        self.page.update()
+        self.toggle_button.bgcolor = ft.Colors.TRANSPARENT
+        self._update(self.panel, self.toggle_button)
 
     def _on_hover(self, e: ft.ControlEvent) -> None:
         if e.data == "true":
             self.toggle_button.bgcolor = ft.Colors.with_opacity(0.1, ft.Colors.ON_SURFACE)
         else:
             self.toggle_button.bgcolor = ft.Colors.TRANSPARENT
-        self.page.update()
+        self._update(self.toggle_button)
+
+    def _update(self, *controls: ft.Control) -> None:
+        """Перерисовывает только свои контролы, а не всю страницу.
+
+        `page.update()` на каждое событие перестраивал всё окно, включая
+        терминал; во время анимации панели (300 мс) это накладывалось на
+        изменение ширины рабочей области и давало рваную перерисовку.
+        """
+        for control in controls:
+            try:
+                control.update()
+            except RuntimeError:
+                pass  # Ещё не примонтирован к странице.
 
     def set_content(self, content: ft.Control) -> None:
         self.panel.content = content
-        if self.page:
-            self.page.update()
+        self._update(self.panel)
 
 
 class ApplicationLayout:

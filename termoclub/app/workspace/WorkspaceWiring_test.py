@@ -40,23 +40,27 @@ def _rendered(item) -> str:  # type: ignore[no-untyped-def]
 
 
 def test_both_terminal_renderers_open_in_tabs() -> None:
-    """В workspace открываются оба терминала: pyte и flet-terminal.
+    """В workspace открываются оба терминала: pyte и smartcli-toolkit.
 
     Рендереры должны быть вызываемыми по отдельности — иначе непонятно,
     какой терминал открывает кнопка.
     """
-    app = TermoClubApp(_StubPage())  # type: ignore[arg-type]
+    page = _StubPage()
+    app = TermoClubApp(page)  # type: ignore[arg-type]
     pyte = app.manager.open("terminal", title="Terminal (pyte)")
-    gpu = app.manager.open("terminal-gpu", title="Terminal (flet)")
+    gpu = app.manager.open("terminal-gpu", title="Terminal (smartcli)")
     app._refresh_workspace()
 
     assert [i.title for i in app.manager.sessions] == [
         "Terminal (pyte)",
-        "Terminal (flet)",
+        "Terminal (smartcli)",
     ]
     assert [i.kind for i in app.manager.sessions] == ["terminal", "terminal-gpu"]
     assert len(_tabs(app)) == 2
     assert len(app.stage._stack.controls) == 2
+    # Контент живёт в сцене, а не в корне страницы: иначе в окне появляется
+    # вторая панель рядом с ApplicationLayout.
+    assert page.added == []
 
     app.manager.close(gpu.session_id)
     app.manager.close(pyte.session_id)
@@ -164,6 +168,34 @@ def test_text_input_roundtrip() -> None:
 async def _wait_running(item) -> None:  # type: ignore[no-untyped-def]
     while not item._bridge.running:
         await asyncio.sleep(0.02)
+
+
+def test_smartcli_terminal_renders_in_the_tab() -> None:
+    """smartcli-вкладка: приглашение и кириллица доезжают до отрисовки.
+
+    Раньше сессия слала на `page.add()` свой контрол (вторая панель в окне) и
+    ни разу не вызывала отрисовку, поэтому вкладка оставалась чёрной, а
+    smartcli-API вызывался как асинхронный (`await start()`, `async for pump()`) —
+    запуск падал с TypeError.
+    """
+    if os.name == "nt":
+        pytest.skip("PTY is not supported on Windows")
+
+    async def scenario() -> None:
+        page = _StubPage()
+        app = TermoClubApp(page)  # type: ignore[arg-type]
+        app.start()
+        item = app.manager.open("terminal-gpu", page, shell="/bin/cat", args=[])  # type: ignore[arg-type]
+        await asyncio.wait_for(_wait_running(item), timeout=10)
+        item._view._on_field_focus(None)  # autofocus скрытого поля
+        item._view._on_field_change(_change("привет"))
+        await asyncio.wait_for(_wait_rendered(item, "привет"), timeout=10)
+        assert "привет" in item.display_text
+        # Панелей ровно две: каркас приложения и рабочая область внутри него.
+        assert len(page.added) == 1
+        app.manager.close(item.session_id)
+
+    asyncio.run(scenario())
 
 
 async def _wait_text(item, needle: str) -> None:  # type: ignore[no-untyped-def]
