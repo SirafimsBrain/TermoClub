@@ -1,5 +1,11 @@
 # termoclub/core/config.py
-"""Конфигурация TermoClub: какой терминал активен по умолчанию."""
+"""Конфигурация TermoClub: какой внешний терминал активен по умолчанию.
+
+Речь именно о внешнем терминале: его открывают пункты меню «New Tab» и
+«New Window». Вкладки рабочей области работают на своих рендерерах
+(`terminal` — pyte + Flet, `terminal-gpu` — smartcli-toolkit) и от этой
+настройки не зависят.
+"""
 from __future__ import annotations
 
 import logging

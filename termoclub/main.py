@@ -124,6 +124,52 @@ class TermoClubApp:
             )
         if self.manager.active_id is not None:
             self.stage.show(self.manager.active_id)
+            # Скрытая вкладка о своём размере не сообщает, поэтому сетку
+            # показываемой считаем из размера окна: иначе после переключения
+            # вкладок терминал остался бы с прежним (или начальным) размером.
+            self._fit_active_terminal()
+
+    def _fit_active_terminal(self, width: float = 0, height: float = 0) -> None:
+        """Пересчитывает сетку активной вкладки под размер рабочей области.
+
+        Вызывается по `page.on_resize` (размер страницы меняется раньше, чем
+        приходит событие контейнера, а для только что показанной вкладки оно
+        может не прийти вовсе) и при показе вкладки.
+        """
+        active = self.manager.get_active()
+        if active is None or not hasattr(active, "resize_to_area"):
+            return
+        if width <= 0 or height <= 0:
+            width, height = self._page_size()
+        if width <= 0 or height <= 0:
+            return
+        area_width, area_height = self.layout.workspace_area_size(width, height)
+        active.resize_to_area(area_width, area_height)
+
+    def _page_size(self) -> tuple[float, float]:
+        """Размер окна в пикселях: сама страница, иначе её окно.
+
+        `page.width`/`page.height` есть и в 0.86, и в 1.0 (там они уже
+        помечены устаревшими в пользу `page.window`), поэтому смотрим оба
+        источника — иначе после обновления Flet вкладка осталась бы без
+        пересчёта размера.
+        """
+        sources = (self.page, getattr(self.page, "window", None))
+        for source in sources:
+            if source is None:
+                continue
+            width = float(getattr(source, "width", 0) or 0)
+            height = float(getattr(source, "height", 0) or 0)
+            if width > 0 and height > 0:
+                return width, height
+        return 0.0, 0.0
+
+    def _on_page_resize(self, event: ft.PageResizeEvent) -> None:
+        """Размер окна изменился: подгоняем сетку активного терминала."""
+        self._fit_active_terminal(
+            float(getattr(event, "width", 0) or 0),
+            float(getattr(event, "height", 0) or 0),
+        )
 
     def _setup_panels(self) -> None:
         page = self.page
@@ -153,13 +199,21 @@ class TermoClubApp:
         self.layout.set_left_content(self.card_list.build())
 
         # --- Right panel: terminal info (collapsible) ---
-        self._terminal_text.value = f"Терминал: {get_active_terminal_name()}"
+        # Внутри вкладок работают два своих рендерера; `ghostty`/`kitty` —
+        # внешние терминалы, которые открывают пункты New Tab/New Window.
+        # Раньше панель показывала только внешний и путала пользователя.
+        self._terminal_text.value = (
+            "Вкладки: " + ", ".join(TERMINAL_TITLES.values())
+        )
         self.layout.set_right_content(
             ft.Column(
                 [
                     ft.Text("Терминал", weight=ft.FontWeight.BOLD, size=14),
                     ft.Divider(),
                     self._terminal_text,
+                    ft.Text(
+                        f"Новая вкладка/окно: {get_active_terminal_name()}", size=12
+                    ),
                 ],
                 expand=True,
             )
@@ -184,6 +238,13 @@ class TermoClubApp:
         else:
             self.layout.set_workspace_content(self._workspace_root)
             self.set_status("Раздел: Главная")
+            # Возврат из логов подменяет контент рабочей области: контрол
+            # терминала снова оказывается в дереве, но фокус уже потерян, а
+            # без него не вводится кириллица.
+            active = self.manager.get_active()
+            if active is not None and hasattr(active, "focus_input"):
+                active.focus_input()
+            self._fit_active_terminal()
         logger.info("Route changed: %s", route)
 
     async def _bootstrap(self) -> None:
@@ -203,6 +264,7 @@ class TermoClubApp:
         self._setup_panels()
         self.page.on_route_change = lambda e: self.route_to_workspace(e.route)
         self.page.on_keyboard_event = self._on_page_key
+        self.page.on_resize = self._on_page_resize
         # Начальный маршрут не порождает on_route_change — рисуем явно.
         self.route_to_workspace(HOME)
 

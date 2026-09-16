@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 
 from core.sessions.WorkspaceItem import WorkspaceItem
 
@@ -38,7 +39,7 @@ def _rdp(**kwargs) -> WorkspaceItem:
     return RdpSession(**kwargs)
 
 
-_REGISTRY: dict[str, callable] = {
+_REGISTRY: dict[str, Callable[..., WorkspaceItem]] = {
     "terminal": _terminal,  # pyte + Flet: чистый Python, работает в stock-клиенте
     "terminal-gpu": _terminal_gpu,  # smartcli-toolkit: PTY и экран из smartcli_core
     "editor": _editor,
@@ -61,7 +62,7 @@ class SessionFactory:
         return item
 
     @staticmethod
-    def register(kind: str, builder: callable) -> None:
+    def register(kind: str, builder: Callable[..., WorkspaceItem]) -> None:
         """Регистрирует новый тип сессии (например, pyte-рендер)."""
         _REGISTRY[kind] = builder
         logger.info("SessionFactory: registered session kind %r", kind)

@@ -253,6 +253,94 @@ def test_resize_coalesces_the_layout_storm() -> None:
     assert (session._screen.columns, session._screen.lines) == (130, 30)
 
 
+def test_grid_follows_every_resize_event_while_the_pty_waits() -> None:
+    """Сетка совпадает с контейнером на каждом кадре, окно PTY — по «тишине».
+
+    Раньше склеивалось и то и другое: во время сжатия окна сетка оставалась
+    прежнего размера и `HARD_EDGE` обрезал правый край вместе с приглашением.
+    """
+    session = TerminalSession()
+    page = _FakePage()
+    session._page = page  # type: ignore[assignment]
+    session.get_content()
+    session.resize(100, 30)
+    session.resize(80, 24)
+    assert (session._screen.columns, session._screen.lines) == (80, 24)
+    page.run_all()
+    assert (session._screen.columns, session._screen.lines) == (80, 24)
+
+
+def test_resize_to_area_uses_the_shared_grid_math() -> None:
+    """Пересчёт по пикселям области даёт ту же сетку, что и событие контейнера."""
+    session = TerminalSession()
+    session.get_content()
+    session.resize_to_area(600, 200)
+    assert (session._screen.columns, session._screen.lines) == session._view.grid_size(
+        600, 200
+    )
+    session.resize_to_area(0, 0)  # неразложенное окно игнорируется
+    assert (session._screen.columns, session._screen.lines) == session._view.grid_size(
+        600, 200
+    )
+
+
+def test_content_requests_focus_for_the_hidden_field() -> None:
+    """Собранный контрол сам просит фокус: без него нет ввода кириллицы.
+
+    `on_focus()` при открытии вкладки вызывается раньше, чем появляется поле
+    ввода, и фокус не запрашивается вовсе — вкладка оставалась без IME.
+    """
+    session = TerminalSession()
+    page = _FakePage()
+    session._page = page  # type: ignore[assignment]
+    session.get_content()
+    assert len(page.tasks) == 1
+    names = [handler.__name__ for handler, _ in page.tasks]
+    assert names == ["_focus_when_mounted"]
+
+
+def test_focus_is_retried_until_the_field_takes_it() -> None:
+    """Запрос фокуса повторяется: до монтирования контрола он падает."""
+    session = TerminalSession()
+    page = _FakePage()
+    session._page = page  # type: ignore[assignment]
+    session.get_content()
+    attempts: list[int] = []
+
+    async def fake_focus() -> None:
+        attempts.append(1)  # никогда не поднимает input_focused
+
+    session._view.focus_input = fake_focus  # type: ignore[method-assign]
+    page.run_all()
+    assert len(attempts) == session.FOCUS_ATTEMPTS
+
+
+def test_terminated_callback_is_deferred_to_the_next_tick() -> None:
+    """Выход шелла уведомляет менеджер не из тела pump-цикла.
+
+    Синхронный вызов закрывал бы вкладку внутри той же корутины:
+    `WorkspaceManager.close()` отменяет задачу, которая сейчас исполняется.
+    """
+    session = TerminalSession()
+    ended: list[str] = []
+    session.on_terminated = ended.append
+    page = _FakePage()
+    session._page = page  # type: ignore[assignment]
+    session._notify_terminated()
+    assert ended == []  # задача только поставлена
+    page.run_all()
+    assert ended == [session.session_id]
+
+
+def test_terminated_without_page_calls_back_immediately() -> None:
+    """Без page (сессия не запускалась) обработчик зовётся сразу."""
+    session = TerminalSession()
+    ended: list[str] = []
+    session.on_terminated = ended.append
+    session._notify_terminated()
+    assert ended == [session.session_id]
+
+
 def test_resize_before_mount_applies_immediately() -> None:
     """Без page хвостовой задачи нет: размер применяется синхронно."""
     session = TerminalSession()

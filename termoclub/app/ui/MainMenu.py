@@ -122,7 +122,11 @@ class MainMenu:
                 self._item(
                     "About Terminals",
                     "circle-info",
-                    lambda: info("Supported terminals: ghostty, kitty."),
+                    lambda: info(
+                        "Вкладки: Terminal (pyte) и Terminal (smartcli). "
+                        "New Tab / New Window открывают внешний терминал "
+                        "(ghostty или kitty)."
+                    ),
                 ),
             ],
         )

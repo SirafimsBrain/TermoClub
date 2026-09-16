@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from typing import TYPE_CHECKING
 
 from core.config import get_active_terminal
@@ -29,7 +30,7 @@ def _kitty() -> "TerminalController":
     return KittyController()
 
 
-_REGISTRY: dict[str, callable] = {
+_REGISTRY: dict[str, Callable[[], "TerminalController"]] = {
     "ghostty": _ghostty,  # реализация по умолчанию
     "kitty": _kitty,  # заготовка
 }

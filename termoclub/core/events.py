@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from typing import Any
+from collections.abc import Callable
 
 logger = logging.getLogger(__name__)
 
@@ -12,9 +12,9 @@ class TerminalEvents:
     """Точка расширения для реакций на события в терминале."""
 
     def __init__(self) -> None:
-        self._tab_color_listeners: list[callable] = []
+        self._tab_color_listeners: list[Callable[[str, str], None]] = []
 
-    def on_tab_color_changed(self, listener: callable) -> None:
+    def on_tab_color_changed(self, listener: Callable[[str, str], None]) -> None:
         """Регистрирует обработчик изменения цвета вкладки."""
         self._tab_color_listeners.append(listener)
 

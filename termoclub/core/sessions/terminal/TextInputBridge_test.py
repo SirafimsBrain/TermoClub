@@ -50,3 +50,45 @@ def test_reset_forgets_mirror() -> None:
     bridge.reset()
     assert bridge.mirror == ""
     assert bridge.feed("cmd") == b"cmd"
+
+
+def test_stale_snapshot_after_clear_sends_only_the_tail() -> None:
+    """Снимок, сделанный до очистки поля, не отправляет префикс повторно.
+
+    Гонка: мы отправляем «п» и сразу очищаем поле, а клиент в это время
+    успевает добавить «р» к ещё не очищенному значению и присылает «пр».
+    Без хвостовой логики «п» уехала бы в PTY дважды.
+    """
+    bridge = TextInputBridge()
+    assert bridge.feed("п") == "п".encode("utf-8")
+    bridge.reset()  # то, что делает clear_input()
+    assert bridge.feed("пр") == "р".encode("utf-8")
+    bridge.reset()
+    assert bridge.feed("при") == "и".encode("utf-8")
+
+
+def test_fresh_input_after_clear_is_not_mistaken_for_a_snapshot() -> None:
+    """Свежий ввод (очистка применена) доходит целиком, а не хвостом."""
+    bridge = TextInputBridge()
+    bridge.feed("abc")
+    bridge.reset()
+    assert bridge.feed("d") == b"d"
+    bridge.reset()
+    # Совпавшее значение — не расширение: оно не теряется.
+    assert bridge.feed("abc") == b"abc"
+
+
+def test_empty_echo_of_our_own_clear_sends_nothing() -> None:
+    """Эхо нашей же очистки не порождает байт и не снимает ожидание снимка."""
+    bridge = TextInputBridge()
+    bridge.feed("a")
+    bridge.reset()
+    assert bridge.feed("") == b""
+    # Ожидание снимка сохранилось: устаревшее «ab» всё ещё даст только хвост.
+    assert bridge.feed("ab") == b"b"
+
+def test_deletion_without_clear_still_sends_backspaces() -> None:
+    """Удаление без промежуточной очистки по-прежнему даёт Backspace'ы."""
+    bridge = TextInputBridge()
+    bridge.feed("abcd")
+    assert bridge.feed("") == b"\x7f\x7f\x7f\x7f"

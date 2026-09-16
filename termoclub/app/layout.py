@@ -17,31 +17,30 @@ class PanelConfig:
     """Sizes of the five panels."""
 
     left_width: int = 280
-    left_min_width: int = 200
-    left_max_width: int = 450
     right_width: int = 280
-    right_min_width: int = 200
-    right_max_width: int = 450
     top_height: int = 40
     bottom_height: int = 28
 
 
 class CollapsiblePanel:
-    """Side panel with a sticky toggle button."""
+    """Side panel with a sticky toggle button.
+
+    Панель либо показана целиком (`default_width`), либо свёрнута в ноль —
+    промежуточных ширин нет, потому что перетаскивания за край нет.
+    """
+
+    #: Ширина полосы с кнопкой-тумблером.
+    TOGGLE_WIDTH = 16
 
     def __init__(
         self,
         page: ft.Page,
         position: str,
         default_width: int = 280,
-        min_width: int = 200,
-        max_width: int = 450,
     ) -> None:
         self.page = page
         self.position = position
         self.default_width = default_width
-        self.min_width = min_width
-        self.max_width = max_width
         self.is_visible = True
         self.current_width = default_width
 
@@ -61,7 +60,7 @@ class CollapsiblePanel:
         )
 
         self.toggle_button = ft.Container(
-            width=16,
+            width=self.TOGGLE_WIDTH,
             content=ft.IconButton(
                 icon=ft.Icons.CHEVRON_LEFT if is_left else ft.Icons.CHEVRON_RIGHT,
                 icon_size=16,
@@ -142,15 +141,11 @@ class ApplicationLayout:
             page,
             position="left",
             default_width=self.config.left_width,
-            min_width=self.config.left_min_width,
-            max_width=self.config.left_max_width,
         )
         self.right_panel = CollapsiblePanel(
             page,
             position="right",
             default_width=self.config.right_width,
-            min_width=self.config.right_min_width,
-            max_width=self.config.right_max_width,
         )
 
         self.workspace_panel = ft.Container(
@@ -183,6 +178,27 @@ class ApplicationLayout:
             ],
             spacing=0,
             expand=True,
+        )
+
+    def workspace_area_size(self, width: float, height: float) -> tuple[float, float]:
+        """Размер центральной рабочей области в пикселях для размера окна.
+
+        Нужен терминалу: скрытая вкладка не получает `on_size_change`, а при
+        показе новый кадр может не прийти вовсе, поэтому сетку нужно уметь
+        пересчитать из размера страницы. Геометрия известна только здесь:
+        две боковые панели (свёрнутая занимает ноль) и по полосе тумблера
+        на каждую, плюс верхняя и нижняя панели по высоте.
+        """
+        side = 0.0
+        for panel in (self.left_panel, self.right_panel):
+            side += CollapsiblePanel.TOGGLE_WIDTH
+            if panel.is_visible:
+                panel_width = panel.panel.width
+                if panel_width is None:
+                    panel_width = float(panel.default_width)
+                side += float(panel_width)
+        return max(width - side, 0.0), max(
+            height - self.config.top_height - self.config.bottom_height, 0.0
         )
 
     def set_top_content(self, content: ft.Control) -> None:

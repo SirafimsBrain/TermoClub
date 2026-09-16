@@ -35,6 +35,8 @@ def test_shell_exit_closes_session() -> None:
         assert session.status == SessionStatus.RUNNING
         await asyncio.wait_for(_wait_closed(session), timeout=10)
         assert session.status == SessionStatus.CLOSED
+        # Уведомление приходит следующим тиком цикла (см. `_notify_terminated`).
+        await asyncio.wait_for(_wait_terminated(terminated), timeout=10)
         assert terminated == [session.session_id]
         session.cleanup()  # повторный cleanup после смерти — безопасен
 
@@ -43,6 +45,11 @@ def test_shell_exit_closes_session() -> None:
 
 async def _wait_closed(session: TerminalSession) -> None:
     while session.status != SessionStatus.CLOSED:
+        await asyncio.sleep(0.02)
+
+
+async def _wait_terminated(terminated: list[str]) -> None:
+    while not terminated:
         await asyncio.sleep(0.02)
 
 

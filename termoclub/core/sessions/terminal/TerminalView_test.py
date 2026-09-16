@@ -127,10 +127,10 @@ def test_size_change_reports_symbol_grid() -> None:
     view, _ = _view(on_resize=lambda c, l: resized.append((c, l)), font_size=10)
     view.control
     view._on_size_change(_size(600, 200))
-    # padding 8 -> (600-16)/6 = 97 колонок, (200-16)/12.5 = 14 строк.
-    assert resized == [(97, 14)]
+    # padding 8 -> (600-16)/6 = 97 колонок минус запас на метрику, (200-16)/12.5 = 14 строк.
+    assert resized == [(96, 14)]
     view._on_size_change(_size(600, 200))
-    assert resized == [(97, 14)]  # повтор того же размера не рассылается
+    assert resized == [(96, 14)]  # повтор того же размера не рассылается
 
 
 def test_tiny_size_falls_back_to_minimums() -> None:
@@ -190,6 +190,38 @@ def test_grid_fits_into_the_reported_container_size() -> None:
     columns, lines = resized[-1]
     assert columns * view._char_width <= 600 - 2 * view._padding
     assert lines * view._line_height <= 200 - 2 * view._padding
+
+
+def test_grid_keeps_a_column_of_slack() -> None:
+    """В колонках держится запас: лучше пустая полоса, чем обрезанное приглашение.
+
+    Ширина знакоместа — оценка (0.6em), и при промахе лишняя колонка ушла бы
+    под `HARD_EDGE`. Строки такой запас не нужны: их высота задана через
+    `TextStyle.height` и точна.
+    """
+    view, _ = _view(font_size=10)
+    view.control
+    columns, lines = view.grid_size(600, 200)
+    budget_width = 600 - 2 * view._padding
+    budget_height = 200 - 2 * view._padding
+    assert (columns + 1) * view._char_width <= budget_width
+    assert lines * view._line_height <= budget_height
+
+
+def test_grid_size_is_the_single_source_of_truth() -> None:
+    """Пересчёт по окну и событие контейнера дают одинаковую сетку."""
+    resized: list[tuple[int, int]] = []
+    view, _ = _view(on_resize=lambda c, l: resized.append((c, l)), font_size=10)
+    view.control
+    view._on_size_change(_size(640, 320))
+    assert resized == [view.grid_size(640, 320)]
+
+
+def test_zero_size_grid_is_the_minimum() -> None:
+    """Неразложенный контейнер даёт минимальную сетку, а не отрицательную."""
+    view, _ = _view()
+    view.control
+    assert view.grid_size(0, 0) == (20, 4)
 
 
 def test_focus_is_tracked_and_click_requests_it() -> None:

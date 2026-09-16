@@ -7,6 +7,7 @@ import logging
 import os
 import select
 import signal
+import time
 
 logger = logging.getLogger(__name__)
 
@@ -28,6 +29,13 @@ class PtyBridge:
 
     #: Таймаут ожидания читаемости PTY (шаг проверки stop-флага).
     READ_POLL_TIMEOUT = 0.1
+
+    #: Сколько ждать завершения ребёнка после сигналов (сек). SIGKILL уже
+    #: послан, поэтому на практике это один-два коротких опроса.
+    REAP_GRACE = 0.2
+
+    #: Шаг опроса `waitpid(WNOHANG)` при сборе ребёнка (сек).
+    REAP_INTERVAL = 0.01
 
     def __init__(
         self,
@@ -132,8 +140,10 @@ class PtyBridge:
 
         Одного SIGTERM мало: интерактивный `bash` его игнорирует, и закрытая
         вкладка оставляла бы живой шелл навсегда. Поэтому посылаем SIGHUP
-        (штатное «повесить трубку» для терминала), затем SIGKILL, и только
-        потом закрываем master-fd.
+        (штатное «повесить трубку» для терминала), затем SIGKILL, собираем
+        ребёнка (`_reap`) и только потом закрываем master-fd. Вызов
+        синхронный, но после SIGKILL ребёнок обычно уже собран на первом же
+        опросе.
         """
         self._stop.set()
         self._kill_child()
@@ -160,8 +170,29 @@ class PtyBridge:
                     target(pid, sig)
                 except (OSError, ProcessLookupError):
                     pass
+        self._reap(pid)
+
+    @classmethod
+    def _reap(cls, pid: int) -> None:
+        """Собирает завершённого ребёнка, не оставляя зомби.
+
+        Одного `waitpid(WNOHANG)` сразу после сигналов мало: процесс умирает
+        не мгновенно, и не собранный ребёнок остаётся зомби — при частом
+        открытии/закрытии вкладок их накапливалось бы до перезапуска.
+        """
+        deadline = time.monotonic() + cls.REAP_GRACE
+        while True:
+            try:
+                done, _ = os.waitpid(pid, os.WNOHANG)
+            except (OSError, ChildProcessError):
+                return  # уже собран (или чужой) — ждать нечего
+            if done == pid:
+                return
+            if time.monotonic() >= deadline:
+                break
+            time.sleep(cls.REAP_INTERVAL)
         try:
-            os.waitpid(pid, os.WNOHANG)
+            os.waitpid(pid, 0)  # SIGKILL уже послан: ждём недолго
         except (OSError, ChildProcessError):
             pass
 

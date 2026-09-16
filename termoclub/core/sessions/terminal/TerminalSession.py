@@ -32,6 +32,12 @@ SIGINT для шелла.
 и `_create_screen()`. Наследник подменяет только их — например,
 `SmartCLITerminalSession` берёт PTY и экран из smartcli-toolkit, — а вся
 логика ввода, буфера обмена, троттлинга и размера остаётся общей.
+
+Размер приходит двумя путями: событие контейнера `on_size_change` (видимая
+вкладка) и `resize_to_area()` — пересчёт по размеру окна для вкладки,
+которую только что показали (скрытая вкладка событий о размере не получает).
+Сетка применяется на каждом событии, а окно PTY — один раз по «тишине»: см.
+`resize()`.
 """
 from __future__ import annotations
 
@@ -68,6 +74,12 @@ class TerminalSession(WorkspaceItem):
 
     #: Клавиши, которые отдаются скрытому полю ввода (Enter -> on_submit).
     TEXT_FIELD_KEYS = frozenset({"Enter", " "})
+
+    #: Сколько раз просить фокус для скрытого поля и с какой паузой (сек).
+    #: Запрос до монтирования контрола падает с RuntimeError, а без фокуса
+    #: в поле кириллицу вводить нечем, поэтому просим повторно.
+    FOCUS_ATTEMPTS = 3
+    FOCUS_RETRY = 0.02
 
     def __init__(
         self,
@@ -150,8 +162,31 @@ class TerminalSession(WorkspaceItem):
         self._status = SessionStatus.CLOSED
         self._refresh(force=True)
         logger.info("TerminalSession %s: shell exited", self.session_id)
-        if self.on_terminated is not None:
-            self.on_terminated(self.session_id)
+        self._notify_terminated()
+
+    def _notify_terminated(self) -> None:
+        """Уведомляет менеджер о завершении шелла отдельным тиком цикла.
+
+        Синхронный вызов закрывает вкладку прямо в теле этой же корутины:
+        `WorkspaceManager.close()` отменяет `_pump_future`, то есть задачу,
+        которая сейчас исполняется. Сейчас это проходит только потому, что
+        после отмены в `_run()` нет `await`, и ломается при любой правке ниже
+        (например, при добавлении `await` в уборку).
+        """
+        callback = self.on_terminated
+        if callback is None:
+            return
+        if self._page is None:
+            callback(self.session_id)
+            return
+        try:
+            self._page.run_task(self._call_terminated, callback)
+        except (AttributeError, RuntimeError):
+            callback(self.session_id)
+
+    async def _call_terminated(self, callback: Callable[[str], None]) -> None:
+        """Вызывает обработчик завершения вне корутины pump-цикла."""
+        callback(self.session_id)
 
     def get_content(self) -> ft.Control:
         """Строит (один раз) контролы терминала вью.
@@ -164,6 +199,11 @@ class TerminalSession(WorkspaceItem):
         if self._content is None:
             self._content = self._view.control
             self._refresh(force=True)
+            # Контрол собран и сейчас будет примонтирован. До этого момента
+            # `on_focus()` не мог запросить фокус (поля ввода ещё нет), а
+            # второго вызова не будет — вкладка открылась бы без фокуса,
+            # то есть без ввода кириллицы и без IME.
+            self.focus_input()
         return self._content
 
     def cleanup(self) -> None:
@@ -220,42 +260,66 @@ class TerminalSession(WorkspaceItem):
     # --- Размер ---
 
     def resize(self, columns: int, lines: int) -> None:
-        """Подгоняет экран и окно PTY под новый размер (шелл получит SIGWINCH).
+        """Подгоняет сетку и окно PTY под новый размер (шелл получит SIGWINCH).
 
-        Событие приходит на каждом кадре анимации выдвижных панелей (300 мс),
-        поэтому первый размер применяется сразу (интерфейс отзывчив), а
-        остальные — один раз, когда раскладка успокоится. Иначе одно
-        открытие/закрытие панели слало бы шеллу десятки SIGWINCH и столько же
-        раз перерисовывало всю сетку: отсюда были и рваная отрисовка, и
-        разъехавшееся приглашение шелла после каждого ресайза.
+        Здесь живут две разные операции, и склеивать их одним дебаунсом
+        нельзя:
+
+        * сетка обязана совпадать с контейнером на каждом кадре — иначе во
+          время анимации панелей или сжатия окна часть экрана просто
+          обрезается `HARD_EDGE` («терминал поехал», приглашения и курсора
+          не видно). Пока размер не применится, пользователь видит битую
+          картинку, поэтому применяем сразу (стоимость ограничена
+          троттлингом отрисовки);
+        * окно PTY менять на каждом кадре нельзя: один toggle панели давал бы
+          шеллу десятки SIGWINCH и столько же полных перерисовок сетки.
+          Поэтому первый размер применяется сразу, а остальные — один раз,
+          когда раскладка успокоится.
         """
         target = (columns, lines)
         if target == self._pending_size:
             return  # тот же размер: повтор кадров анимации
         self._pending_size = target
         self._pending_at = time.monotonic()
+        grid_changed = self._screen.resize(columns, lines)
+        if grid_changed:
+            self._refresh()
         if self._resize_task is not None:
-            return  # хвостовое применение уже запланировано
-        self._apply_resize(columns, lines)
+            return  # хвостовое применение PTY уже запланировано
+        self._apply_pty_resize(columns, lines, grid_changed=grid_changed)
         if self._page is not None:
             self._resize_task = self._page.run_task(self._flush_resize)
 
-    def _apply_resize(self, columns: int, lines: int) -> None:
-        """Применяет размер к экрану и PTY (без ожидания «тишины»)."""
-        if not self._screen.resize(columns, lines):
+    def resize_to_area(self, width: float, height: float) -> None:
+        """Подгоняет сетку под пиксельный размер рабочей области.
+
+        Нужен там, где событие `on_size_change` контейнера не приходит:
+        скрытая вкладка (`visible=False`) о своём размере не сообщает, а при
+        показе новый кадр может не прийти вовсе. Геометрию области знает
+        `ApplicationLayout`, подсчёт символов — `TerminalView.grid_size`, так
+        что источник правды о сетке остаётся один.
+        """
+        if width <= 0 or height <= 0:
+            return
+        self.resize(*self._view.grid_size(width, height))
+
+    def _apply_pty_resize(
+        self, columns: int, lines: int, grid_changed: bool = True
+    ) -> None:
+        """Применяет размер к окну PTY (без ожидания «тишины»)."""
+        if not grid_changed:
             return
         self._bridge.resize(columns, lines)
-        self._refresh(force=True)
         logger.info(
             "TerminalSession %s: resized to %dx%d", self.session_id, columns, lines
         )
 
     async def _flush_resize(self) -> None:
-        """Применяет последний размер, когда поток resize-событий иссяк.
+        """Применяет последний размер к PTY, когда поток событий иссяк.
 
         Ждём «тишины» в `RESIZE_DEBOUNCE`, но не дольше `RESIZE_MAX_WAIT`:
         анимация панелей (300 мс) схлопывается в одно применение, а
-        непрерывное перетаскивание окна всё равно обновляет сетку.
+        непрерывное перетаскивание окна всё равно обновляет окно PTY.
         """
         started = time.monotonic()
         try:
@@ -267,7 +331,7 @@ class TerminalSession(WorkspaceItem):
                 if quiet or time.monotonic() - started >= self.RESIZE_MAX_WAIT:
                     break
             if self._pending_size is not None:
-                self._apply_resize(*self._pending_size)
+                self._apply_pty_resize(*self._pending_size)
         finally:
             self._resize_task = None
 
@@ -304,6 +368,10 @@ class TerminalSession(WorkspaceItem):
             meta=event.meta,
         )
         if data is None:
+            # Клавиша не наша (например, F-клавиша без обработки) — но фокус
+            # вернуть всё равно нужно, иначе следующие символы потеряют IME.
+            if not focused:
+                self.focus_input()
             return False
         self._bridge.write(data)
         if not focused or event.key == "Tab":
@@ -430,13 +498,35 @@ class TerminalSession(WorkspaceItem):
     # --- Фокус ---
 
     def focus_input(self) -> None:
-        """Возвращает фокус скрытому полю ввода (иначе IME-символы не придут)."""
+        """Возвращает фокус скрытому полю ввода (иначе IME-символы не придут).
+
+        Запрос не отправляется напрямую: до монтирования контрола он
+        падает, а вызывающему (активация вкладки, `on_click`, диспетчер
+        клавиш) знать об этом незачем — повторную попытку делает
+        `_focus_when_mounted`.
+        """
         if not self._view.input_ready or self._page is None:
             return
         try:
-            self._page.run_task(self._view.focus_input)
+            self._page.run_task(self._focus_when_mounted)
         except (AttributeError, RuntimeError):
             pass  # Контрол ещё не примонтирован к странице.
+
+    async def _focus_when_mounted(self) -> None:
+        """Просит фокус для поля ввода, дожидаясь его монтирования.
+
+        Контрол вкладки попадает в дерево на следующем тике после
+        `get_content()`, поэтому первый запрос может пройти, а может и
+        упасть: без повтора вкладка осталась бы без фокуса, то есть без
+        ввода кириллицы. Попыток мало и они короткие — иначе терминал
+        отбирал бы фокус у меню и панелей.
+        """
+        for attempt in range(self.FOCUS_ATTEMPTS):
+            await self._view.focus_input()
+            if self._view.input_focused:
+                return
+            if attempt + 1 < self.FOCUS_ATTEMPTS:
+                await asyncio.sleep(self.FOCUS_RETRY)
 
     def on_focus(self) -> None:
         super().on_focus()

@@ -54,6 +54,46 @@ SPECIALS = {
     "F12": b"\x1b[24~",
 }
 
+#: `Shift`-версии служебных клавиш (метка от Shift не зависит).
+SHIFTED = {
+    "Tab": b"\x1b[Z",  # back-tab
+}
+
+#: `Ctrl` (и `Alt`) поверх служебных клавиш: `1;5` — модификатор Ctrl.
+CTRL_SPECIALS = {
+    "Arrow Up": b"\x1b[1;5A",
+    "Arrow Down": b"\x1b[1;5B",
+    "Arrow Right": b"\x1b[1;5C",
+    "Arrow Left": b"\x1b[1;5D",
+    "Home": b"\x1b[1;5H",
+    "End": b"\x1b[1;5F",
+    "Delete": b"\x1b[3;5~",
+    # Интерактивный `bash` (readline) трактует это как «стереть слово».
+    "Backspace": b"\x17",
+}
+
+#: `Ctrl` + символ в US-раскладке -> управляющий байт (как в xterm).
+CTRL_SYMBOLS = {
+    " ": b"\x00",
+    "@": b"\x00",
+    "2": b"\x00",
+    "[": b"\x1b",
+    "3": b"\x1b",
+    "\\": b"\x1c",
+    "4": b"\x1c",
+    "]": b"\x1d",
+    "5": b"\x1d",
+    "^": b"\x1e",
+    "6": b"\x1e",
+    "_": b"\x1f",
+    "-": b"\x1f",
+    "/": b"\x1f",
+    "7": b"\x1f",
+    "8": b"\x7f",
+    "Space": b"\x00",
+    "Backspace": b"\x17",
+}
+
 
 class TerminalKeymap:
     """Переводит служебные клавиши и комбинации в байты терминала."""
@@ -73,24 +113,39 @@ class TerminalKeymap:
     ) -> bytes | None:
         """Возвращает байты для PTY или None, если клавиша не наша.
 
-        `Ctrl+C` -> `0x03`, `Alt+x` -> `ESC x`, стрелки/`F-клавиши` -> их
+        `Ctrl+C` -> `0x03`, `Ctrl+Space` -> `0x00`, `Ctrl+Arrow Left` ->
+        `ESC[1;5D`, `Alt+x` -> `ESC x`, стрелки/`F-клавиши` -> их
         escape-последовательности. Печатаемые символы без модификаторов
         сюда не относятся: их отдаёт поле ввода с учётом раскладки.
         """
         if TerminalKeymap.is_modifier(key):
             return None
         if ctrl or meta:
-            if len(key) == 1 and key.isalpha():
-                code = bytes([ord(key.lower()) - 96])  # Ctrl+C -> 0x03 и т.д.
-                return b"\x1b" + code if alt else code  # Alt+Ctrl+C -> ESC 0x03
-            return None
+            data = TerminalKeymap._control_bytes(key, alt=alt)
+            return data
         if alt and len(key) == 1:
             return b"\x1b" + key.encode("utf-8", errors="ignore")
+        if shift and key in SHIFTED:
+            return SHIFTED[key]
         if key in SPECIALS:
             return SPECIALS[key]
-        # Printable characters without ctrl, alt, meta are handled by the input field
-        if len(key) == 1 and not (ctrl or alt or meta):
-            return None
-        if len(key) == 1:
-            return key.encode("utf-8", errors="ignore")
+        return None
+
+    @staticmethod
+    def _control_bytes(key: str, alt: bool = False) -> bytes | None:
+        """`Ctrl+<клавиша>` -> управляющий байт (или None).
+
+        Метка приходит из US-раскладки, поэтому таблицы хватает; латиница
+        считается арифметикой (`Ctrl+A` -> `0x01`), а нелатинская метка
+        отбрасывается — иначе `ord()` вылетел бы за диапазон байта.
+        """
+        if key.isascii() and len(key) == 1 and key.isalpha():
+            code = bytes([ord(key.lower()) - 96])
+            return b"\x1b" + code if alt else code
+        if key in CTRL_SPECIALS:
+            code = CTRL_SPECIALS[key]
+            return b"\x1b" + code if alt else code
+        if key in CTRL_SYMBOLS:
+            code = CTRL_SYMBOLS[key]
+            return b"\x1b" + code if alt else code
         return None

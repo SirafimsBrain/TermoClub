@@ -45,6 +45,15 @@ MONO_ASPECT = 0.6
 #: Высота строки как множитель кегля (`TextStyle.height`).
 MONO_LINE_HEIGHT = 1.25
 
+#: Запас по колонкам на погрешность ширины знакоместа (см. `grid_size`).
+GRID_COLUMN_SLACK = 1
+
+#: Граница скрытого поля ввода. В Flet 1.0 `InputBorder.NONE` объявлен
+#: устаревшим, а его замена (`NoInputBorder`) в 0.86 ещё не существует.
+INPUT_BORDER = (
+    ft.NoInputBorder() if hasattr(ft, "NoInputBorder") else ft.InputBorder.NONE
+)
+
 #: Атрибуты пустой ячейки: (fg, bg, italics, underscore, strikethrough).
 BLANK = (DEFAULT_FG, DEFAULT_BG, False, False, False)
 
@@ -128,7 +137,7 @@ class TerminalView:
                 opacity=0,
                 text_size=1,
                 content_padding=0,
-                border=ft.InputBorder.NONE,
+                border=INPUT_BORDER,
                 cursor_color=ft.Colors.TRANSPARENT,
                 autofocus=True,
                 on_change=self._on_field_change,
@@ -309,6 +318,35 @@ class TerminalView:
 
     # --- Размер ---
 
+    def grid_size(self, width: float, height: float) -> tuple[int, int]:
+        """Размер сетки в символах для пиксельного размера контейнера.
+
+        Единственный источник правды о том, сколько символов влезает:
+        тем же расчётом пользуется и пересчёт по размеру окна (см.
+        `TerminalSession.resize_to_area`), иначе два пути давали бы разную
+        сетку на одном и том же размере.
+
+        Высота строки задана через `TextStyle.height` и точна (Flutter берёт
+        ровно `height * fontSize`), а вот ширина знакоместа — доля кегля
+        (`MONO_ASPECT`), то есть оценка. Поэтому в колонках держится запас в
+        одно знакоместо: при промахе метрики справа останется пустая полоса,
+        а не обрезанное `HARD_EDGE` приглашение. Дополнительно уменьшать
+        число строк незачем — они уже гарантированно совпадают с контейнером.
+        """
+        if width <= 0 or height <= 0:
+            return self._min_columns, self._min_lines
+        width_budget = max(width - 2 * self._padding, 0.0)
+        height_budget = max(height - 2 * self._padding, 0.0)
+        columns = max(
+            self._min_columns,
+            int(width_budget // self._char_width) - GRID_COLUMN_SLACK,
+        )
+        lines = max(
+            self._min_lines,
+            int(height_budget // self._line_height),
+        )
+        return columns, lines
+
     def _on_size_change(self, event: ft.ControlEvent) -> None:
         """Сообщает наружу размер терминала в символах по пикселям контейнера."""
         if self._on_resize is None:
@@ -319,15 +357,8 @@ class TerminalView:
             # Контейнер ещё не разложен: `min_columns x min_lines` схлопнули бы
             # окно PTY и заставили шелл перерисовать подсказку в 4 строки.
             return
-        columns = max(
-            self._min_columns,
-            int(max(width - 2 * self._padding, 0) // self._char_width),
-        )
-        lines = max(
-            self._min_lines,
-            int(max(height - 2 * self._padding, 0) // self._line_height),
-        )
-        if (columns, lines) == self._size:
+        size = self.grid_size(width, height)
+        if size == self._size:
             return
-        self._size = (columns, lines)
-        self._on_resize(columns, lines)
+        self._size = size
+        self._on_resize(*size)

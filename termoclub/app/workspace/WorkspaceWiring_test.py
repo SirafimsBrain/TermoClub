@@ -68,7 +68,7 @@ def test_both_terminal_renderers_open_in_tabs() -> None:
 
 
 def test_first_prompt_is_rendered_as_a_full_grid() -> None:
-    """Приглашение шелла отрисовано, а сетка влезает во вьюпорт по строкам.
+    """Шелл отвечает, и его вывод влезает во вьюпорт по строкам.
 
     Раньше экран прокручивался к низу и показывал только пустые строки —
     ни приглашения, ни места для ввода.
@@ -81,10 +81,11 @@ def test_first_prompt_is_rendered_as_a_full_grid() -> None:
         app = TermoClubApp(page)  # type: ignore[arg-type]
         app.start()
         item = app.manager.open("terminal", page)  # type: ignore[arg-type]
-        await asyncio.wait_for(_wait_prompt(item), timeout=10)
+        await asyncio.wait_for(_wait_running(item), timeout=10)
+        await asyncio.wait_for(_wait_marker(item), timeout=10)
 
         rendered = _rendered(item)
-        assert "#" in rendered or "$" in rendered
+        assert MARKER in rendered
         # Строк ровно столько, сколько в сетке: лишние уехали бы в скролл.
         assert rendered.count("\n") == item._screen.lines - 1
         app.manager.close(item.session_id)
@@ -92,9 +93,20 @@ def test_first_prompt_is_rendered_as_a_full_grid() -> None:
     asyncio.run(scenario())
 
 
-async def _wait_prompt(item) -> None:  # type: ignore[no-untyped-def]
-    """Ждёт, пока приглашение доедет именно до отрисовки, а не только до pyte."""
-    while not any(mark in _rendered(item) for mark in "#$"):
+#: Слово, которое шелл печатает только в выводе (см. `_wait_marker`).
+MARKER = "TERMOCLUB_READY"
+
+
+async def _wait_marker(item, marker: str = MARKER) -> None:  # type: ignore[no-untyped-def]
+    """Ждёт маркер вывода шелла, не завязываясь на его `PS1`.
+
+    Приглашение зависит от конфигурации пользователя (zsh рисует `➜`), поэтому
+    проверяем не `#`/`$`, а ответ на команду. Слово собирается из двух частей
+    (`TERMO""CLUB_READY`): в эхе самого ввода оно тогда не встречается, а шелл
+    печатает его только в выводе — ждать приходится именно отрисовку.
+    """
+    item._bridge.write(f'echo {marker[:5]}""{marker[5:]}\r'.encode())
+    while marker not in _rendered(item):
         await asyncio.sleep(0.02)
 
 
@@ -206,3 +218,55 @@ async def _wait_text(item, needle: str) -> None:  # type: ignore[no-untyped-def]
 async def _wait_rendered(item, needle: str) -> None:  # type: ignore[no-untyped-def]
     while needle not in _rendered(item):
         await asyncio.sleep(0.02)
+
+
+def test_focus_is_requested_for_a_newly_mounted_tab() -> None:
+    """Смонтированная вкладка сама возвращает себе фокус поля ввода.
+
+    Иначе вторая открытая вкладка оставалась без фокуса, то есть без ввода
+    кириллицы: `on_focus()` вызывается до того, как контрол попал в дерево.
+    """
+    async def scenario() -> None:
+        page = _StubPage()
+        app = TermoClubApp(page)  # type: ignore[arg-type]
+        app.start()
+        app.manager.open("terminal", page, title="pane 1")  # type: ignore[arg-type]
+        second = app.manager.open("terminal", page, title="pane 2")  # type: ignore[arg-type]
+        focused: list[bool] = []
+
+        async def fake_focus() -> None:
+            focused.append(True)
+
+        second._view.focus_input = fake_focus  # type: ignore[method-assign]
+        app._refresh_workspace()  # монтирует контент вкладки
+        await asyncio.sleep(0.1)
+        assert focused
+        for item in app.manager.sessions:
+            app.manager.close(item.session_id)
+
+    asyncio.run(scenario())
+
+
+def test_resize_of_the_window_refits_the_active_tab() -> None:
+    """Размер окна пересчитывает сетку активной вкладки.
+
+    Скрытая вкладка событий о размере не получает, а при показе новый кадр
+    контейнера может не прийти: без пересчёта из размера окна после
+    переключения вкладок терминал оставался бы с прежней сеткой.
+    """
+    page = _StubPage()
+    app = TermoClubApp(page)  # type: ignore[arg-type]
+    item = app.manager.open("terminal", title="pyte")
+    area = app.layout.workspace_area_size(1400, 900)
+    app._on_page_resize(SimpleNamespace(width=1400, height=900))
+    assert (item._screen.columns, item._screen.lines) == item._view.grid_size(*area)
+    assert item._view.grid_size(*area) != (80, 24)
+
+    # Показ вкладки тоже пересчитывает сетку: без явного события о размере
+    # берём его у самой страницы.
+    page.width, page.height = 900, 600
+    small_area = app.layout.workspace_area_size(900, 600)
+    app._fit_active_terminal()
+    assert (item._screen.columns, item._screen.lines) == item._view.grid_size(
+        *small_area
+    )

@@ -67,8 +67,8 @@ termoclub/
 ## Requirements
 
 - Python 3.13+
-- [Flet](https://flet.dev) — `pip install flet`
-- [Ghostty](https://ghostty.org) installed and on `PATH` (Linux: `+new-window` CLI; macOS: AppleScript dictionary)
+- Dependencies from `requirements.txt`: [Flet](https://flet.dev) (pinned to the tested `0.86` line: the `1.0` release is not verified), [`smartcli-toolkit`](https://pypi.org/project/smartcli-toolkit/) (PTY and screen model for the `Terminal (smartcli)` tab) and `pyte` (screen emulation for the `Terminal (pyte)` tab)
+- [Ghostty](https://ghostty.org) installed and on `PATH` for the **external** terminal (menu items New Tab / New Window; Linux: `+new-window` CLI; macOS: AppleScript dictionary)
 
 ## Installation and run
 
@@ -88,6 +88,7 @@ TERMOCLUB_TERMINAL=ghostty python termoclub/main.py
 ## Tests
 
 ```bash
+pip install -r requirements-dev.txt
 python -m pytest -q
 ```
 

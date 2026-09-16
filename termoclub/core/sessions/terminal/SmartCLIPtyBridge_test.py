@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import asyncio
 import os
+import shutil
+import threading
 
 import pytest
 
@@ -106,6 +108,67 @@ def test_resize_keeps_pty_and_model_in_sync() -> None:
         bridge.terminate()
 
     asyncio.run(scenario())
+
+
+def test_flooding_output_does_not_starve_the_event_loop() -> None:
+    """Непрерывный вывод не занимает цикл целиком.
+
+    `PtySession.pump()` читает неблокирующе, поэтому ветка «данные есть»
+    крутилась бы без `await`: на `yes` замирали и отрисовка, и ввод, и
+    закрытие вкладки (тикер в том же цикле не получал управления).
+
+    Сценарий идёт в отдельном потоке с таймаутом: на голодном цикле не
+    сработает даже таймаут `wait_for`, и тест повис бы навсегда — вместо
+    этого получаем внятное падение.
+    """
+    if os.name == "nt":
+        pytest.skip("PTY is not supported on Windows")
+    producer = shutil.which("yes")
+    if producer is None:
+        pytest.skip("`yes` is not available")
+
+    thread = threading.Thread(
+        target=lambda: asyncio.run(_flood(producer)), daemon=True
+    )
+    thread.start()
+    thread.join(timeout=30)
+    assert not thread.is_alive(), "pump() занимает цикл целиком: тикер не идёт"
+
+
+async def _flood(producer: str) -> None:
+    """Льёт непрерывный вывод и считает тики соседней задачи."""
+    bridge = SmartCLIPtyBridge(shell=producer, args=[])
+    await bridge.start()
+    first_chunk = asyncio.Event()
+
+    def on_data(_chunk: bytes) -> None:
+        first_chunk.set()
+
+    pump = asyncio.ensure_future(bridge.pump(on_data))
+    # Ждём начала потока: иначе первый тик успевает пройти на тишине
+    # (шелл стартует не мгновенно) и тест перестал бы ловить голодание.
+    await asyncio.wait_for(first_chunk.wait(), timeout=5)
+
+    ticks = 0
+    stop = asyncio.Event()
+
+    async def ticker() -> None:
+        nonlocal ticks
+        while not stop.is_set():
+            await asyncio.sleep(0.01)
+            ticks += 1
+
+    ticker_task = asyncio.ensure_future(ticker())
+    await asyncio.sleep(0.6)
+    stop.set()
+    bridge.request_stop()
+    bridge.terminate()
+    await asyncio.wait_for(pump, timeout=5)
+    await ticker_task
+    # На голодном цикле тикер не успел бы ни разу. Тиков немного и с
+    # исправлением: разбор одной порции вывода занимает десятки
+    # миллисекунд, так что счётчик здесь — только про живость цикла.
+    assert ticks >= 2
 
 
 def test_shell_exit_ends_the_pump_loop() -> None:
