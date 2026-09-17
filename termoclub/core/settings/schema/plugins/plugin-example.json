@@ -1,0 +1,54 @@
+{
+  "slug": "plugin-example",
+  "title": "Example Plugin",
+  "icon": "wand-magic-sparkles",
+  "description": "Built-in example schema: shows every plugin setting type.",
+  "order": 900,
+  "settings": {
+    "enabled": {
+      "type": "boolean",
+      "label": "Enabled",
+      "default": true
+    },
+    "endpoint": {
+      "type": "link",
+      "link_type": "url",
+      "label": "Endpoint",
+      "description": "Service the plugin talks to.",
+      "default": "https://example.com"
+    },
+    "interval": {
+      "type": "integer",
+      "label": "Poll interval",
+      "default": 60,
+      "min": 5,
+      "max": 3600,
+      "unit": "s"
+    },
+    "tags": {
+      "type": "multi_choice",
+      "label": "Tags",
+      "default": ["demo"],
+      "choices": [
+        { "value": "demo", "label": "Demo" },
+        { "value": "beta", "label": "Beta" },
+        { "value": "internal", "label": "Internal" }
+      ]
+    },
+    "note": {
+      "type": "text",
+      "label": "Note",
+      "default": ""
+    },
+    "cache_file": {
+      "type": "file",
+      "label": "Cache file",
+      "default": ""
+    },
+    "started_at": {
+      "type": "datetime",
+      "label": "Started at",
+      "default": ""
+    }
+  }
+}

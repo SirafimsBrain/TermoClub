@@ -6,13 +6,19 @@ pyte отдаёт в `Char.fg`/`Char.bg` либо имя (`default`, `red`, `bri
 цвета Flet. Жирный шрифт, по конвенции терминалов, не утолщается, а
 «подсвечивает» базовый цвет до bright-варианта — так не съезжает сетка
 моноширинного шрифта.
+
+Палитра — объект, а не набор констант: цвета по умолчанию и ANSI-набор
+приходят из настроек (`terminal-pyte` / `terminal-smartcli`), поэтому у
+каждой вкладки терминала может быть своя палитра.
 """
 from __future__ import annotations
 
-#: Цвет по умолчанию для текста.
+from collections.abc import Mapping
+
+#: Цвет по умолчанию для текста (умолчание схемы настроек).
 DEFAULT_FG = "#d8dee9"
 
-#: Цвет фона терминала.
+#: Цвет фона терминала (умолчание схемы настроек).
 DEFAULT_BG = "#000000"
 
 #: ANSI-цвета (xterm-подобные, читаемые на чёрном фоне).
@@ -52,25 +58,42 @@ BRIGHT = {
 
 
 class TerminalPalette:
-    """Преобразование цветов pyte в цвета Flet."""
+    """Преобразование цветов pyte в цвета Flet с настраиваемыми умолчаниями."""
 
-    @staticmethod
-    def resolve(color: str, fallback: str) -> str:
+    def __init__(
+        self,
+        foreground: str = DEFAULT_FG,
+        background: str = DEFAULT_BG,
+        ansi: Mapping[str, str] | None = None,
+    ) -> None:
+        self._foreground = foreground or DEFAULT_FG
+        self._background = background or DEFAULT_BG
+        self._ansi = {**ANSI, **(ansi or {})}
+
+    @property
+    def foreground_color(self) -> str:
+        """Цвет текста по умолчанию (`default` в pyte)."""
+        return self._foreground
+
+    @property
+    def background_color(self) -> str:
+        """Цвет фона по умолчанию."""
+        return self._background
+
+    def resolve(self, color: str, fallback: str) -> str:
         """Имя ANSI или hex-строка pyte -> `#RRGGBB`."""
-        if color in ANSI:
-            return ANSI[color]
+        if color in self._ansi:
+            return self._ansi[color]
         if len(color) == 6 and all(c in "0123456789abcdefABCDEF" for c in color):
             return f"#{color}"
         return fallback
 
-    @classmethod
-    def foreground(cls, color: str, bold: bool = False) -> str:
+    def foreground(self, color: str, bold: bool = False) -> str:
         """Цвет текста; `bold` подсвечивает базовые цвета до bright."""
         if bold and color in BRIGHT:
-            return ANSI[BRIGHT[color]]
-        return cls.resolve(color, DEFAULT_FG)
+            return self.resolve(BRIGHT[color], self._foreground)
+        return self.resolve(color, self._foreground)
 
-    @classmethod
-    def background(cls, color: str) -> str:
+    def background(self, color: str) -> str:
         """Цвет фона ячейки."""
-        return cls.resolve(color, DEFAULT_BG)
+        return self.resolve(color, self._background)

@@ -1,0 +1,73 @@
+{
+  "slug": "appearance",
+  "title": "Appearance",
+  "icon": "palette",
+  "description": "Look and feel of the application window.",
+  "order": 20,
+  "settings": {
+    "theme_seed": {
+      "type": "color",
+      "label": "Theme seed",
+      "description": "Base colour the Material theme is generated from.",
+      "default": "#2196f3",
+      "applier": "theme_seed"
+    },
+    "ui_font_family": {
+      "type": "choice",
+      "label": "Interface font",
+      "description": "Font family used for the UI (bundled families only).",
+      "default": "JetBrains Mono",
+      "choices": [
+        { "value": "JetBrains Mono", "label": "JetBrains Mono" },
+        { "value": "", "label": "System default" }
+      ],
+      "requires_restart": true
+    },
+    "ui_density": {
+      "type": "choice",
+      "label": "Density",
+      "description": "How tightly UI rows are packed.",
+      "default": "comfortable",
+      "choices": [
+        { "value": "compact", "label": "Compact" },
+        { "value": "comfortable", "label": "Comfortable" }
+      ]
+    },
+    "animation_ms": {
+      "type": "integer",
+      "label": "Panel animation",
+      "description": "Duration of the collapsible panel animation.",
+      "default": 300,
+      "min": 0,
+      "max": 1000,
+      "step": 50,
+      "unit": "ms"
+    },
+    "show_left_panel": {
+      "type": "boolean",
+      "label": "Show left panel",
+      "description": "Session cards panel on startup.",
+      "default": true
+    },
+    "show_right_panel": {
+      "type": "boolean",
+      "label": "Show right panel",
+      "description": "Terminal info panel on startup.",
+      "default": true
+    },
+    "status_bar_font_size": {
+      "type": "integer",
+      "label": "Status bar font size",
+      "default": 11,
+      "min": 8,
+      "max": 20
+    },
+    "background_image": {
+      "type": "image",
+      "label": "Background image",
+      "description": "Optional image painted behind the workspace.",
+      "default": "",
+      "extensions": [".png", ".jpg", ".jpeg", ".webp"]
+    }
+  }
+}

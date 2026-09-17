@@ -14,7 +14,7 @@ from pathlib import Path
 import flet as ft
 
 from app.layout import ApplicationLayout
-from app.routes import HOME, LOGS
+from app.routes import HOME, LOGS, SETTINGS
 from app.ui.FontAwesome import FontAwesome
 from app.ui.MainMenu import MainMenu
 from app.ui.SessionCardData import SessionCardData
@@ -25,6 +25,9 @@ from app.ui.WorkspaceTabBar import WorkspaceTabBar
 from app.ui.components import show_snack
 from app.workspace.WorkspaceManager import WorkspaceManager
 from core.config import get_active_terminal_name
+from core.settings.SettingsApplier import SettingsApplier
+from core.settings.SettingsStore import SettingsStore
+from core.terminal.factory import create_terminal_controller
 from logging_setup import setup_logging
 
 logger = logging.getLogger(__name__)
@@ -41,6 +44,12 @@ TERMINAL_TITLES = {
     "terminal-gpu": "Terminal (smartcli)",
 }
 
+#: Рендерер -> категория настроек, описывающая его внешний вид.
+TERMINAL_SETTINGS = {
+    "terminal": "terminal-pyte",
+    "terminal-gpu": "terminal-smartcli",
+}
+
 
 class TermoClubApp:
     """Каркас главного окна: панели + роутинг в рабочую область."""
@@ -51,6 +60,16 @@ class TermoClubApp:
         self.layout = ApplicationLayout(page)
         self.statuses = SystemStatuses()
         self.manager = WorkspaceManager()
+        # Настройки: одно хранилище на приложение, поверх — применение к
+        # живым вкладкам и странице (тема, шрифт терминала, частота отрисовки).
+        self.settings = SettingsStore()
+        self.applier = SettingsApplier(
+            self.settings,
+            sessions=lambda: self.manager.sessions,
+            page=page,
+            terminal_factory=create_terminal_controller,
+        )
+        self.settings.subscribe_changes(self.applier.apply_key)
         self.tab_bar = WorkspaceTabBar(
             on_select=self.manager.activate,
             on_close=self.manager.close,
@@ -97,13 +116,51 @@ class TermoClubApp:
         показываем его в статусной панели и снекбаром вместо пустой вкладки.
         """
         title = TERMINAL_TITLES.get(kind, kind)
+        kwargs: dict = {"title": title}
+        terminal_slug = TERMINAL_SETTINGS.get(kind)
+        if terminal_slug is not None and self.settings.schema.find(terminal_slug) is not None:
+            kwargs["appearance"] = self.settings.values(terminal_slug)
         try:
-            self.manager.open(kind, self.page, title=title)
+            self.manager.open(kind, self.page, **kwargs)
         except Exception as exc:  # noqa: BLE001 — пользователю нужен любой текст
             logger.exception("Failed to open %s session", kind)
             message = f"Не удалось открыть «{title}»: {exc}"
             self.set_status(message)
             show_snack(self.page, message, is_error=True)
+
+    def _open_settings(self, slug: str | None = None) -> None:
+        """Открывает вкладку Settings (и, при необходимости, её категорию).
+
+        Вкладка одна: повторный вызов только активирует её и переключает
+        категорию, чтобы не плодить дубликаты в рабочей области.
+        """
+        session = self._find_settings_session()
+        if session is None:
+            try:
+                session = self.manager.open("settings", self.page, store=self.settings)
+            except Exception as exc:  # noqa: BLE001 — пользователю нужен текст
+                logger.exception("Failed to open settings session")
+                message = f"Не удалось открыть настройки: {exc}"
+                self.set_status(message)
+                show_snack(self.page, message, is_error=True)
+                return
+        else:
+            self.manager.activate(session.session_id)
+        if slug:
+            try:
+                session.get_content()  # гарантирует, что экран уже собран
+                if session.view is not None:
+                    session.view.select(slug)
+            except Exception:  # noqa: BLE001 — категория не должна ломать вкладку
+                logger.exception("Failed to select settings category %r", slug)
+        self.set_status("Настройки")
+
+    def _find_settings_session(self):
+        """Находит уже открытую вкладку Settings (если есть)."""
+        for item in self.manager.sessions:
+            if item.kind == "settings":
+                return item
+        return None
 
     def _refresh_workspace(self) -> None:
         """Сверяет вкладки, сцену и карточки с состоянием менеджера."""
@@ -183,6 +240,7 @@ class TermoClubApp:
             on_new_window=lambda: open_new_window(page, self.set_status),
             on_new_session=lambda: self._open_terminal("terminal"),
             on_new_gpu_session=lambda: self._open_terminal("terminal-gpu"),
+            on_open_settings=self._open_settings,
             on_info=lambda message: show_snack(page, message),
             on_exit=self.exit_app,
         )
@@ -235,6 +293,11 @@ class TermoClubApp:
 
             self.layout.set_workspace_content(logs_content(self.page))
             self.set_status("Раздел: Логи")
+        elif route == SETTINGS:
+            # Настройки — обычная вкладка workspace, поэтому маршрут лишь
+            # показывает рабочую область и открывает (или активирует) её.
+            self.layout.set_workspace_content(self._workspace_root)
+            self._open_settings()
         else:
             self.layout.set_workspace_content(self._workspace_root)
             self.set_status("Раздел: Главная")
@@ -248,8 +311,34 @@ class TermoClubApp:
         logger.info("Route changed: %s", route)
 
     async def _bootstrap(self) -> None:
-        """Отложенно открывает первую вкладку терминала (pyte-рендер)."""
-        self._open_terminal("terminal")
+        """Восстанавливает сессии запуска и применяет стартовые настройки."""
+        self.applier.apply_all()
+        self._scan_plugins()
+        kind = self.settings.get("global", "startup_session")
+        if kind and kind != "none":
+            self._open_terminal(kind)
+
+    def _scan_plugins(self) -> None:
+        """Подхватывает настройки плагинов из профиля при старте.
+
+        Сканирование включается настройками `plugins`, поэтому выключенные
+        плагины или отключённый автообзор не мешают запуску приложения.
+        """
+        schema = self.settings.schema.find("plugins")
+        if schema is None:
+            return
+        if not self.settings.get("plugins", "enable_plugins"):
+            logger.info("Plugin scan skipped: plugins are disabled")
+            return
+        if not self.settings.get("plugins", "auto_discover"):
+            logger.info("Plugin scan skipped: auto discover is off")
+            return
+        try:
+            found = self.settings.refresh_plugins()
+        except Exception:  # noqa: BLE001 — плагин не должен ронять запуск
+            logger.exception("Plugin scan failed at startup")
+            return
+        logger.info("Plugin scan at startup: %d plugin(s) found", len(found))
 
     def _on_page_key(self, e: ft.KeyboardEvent) -> None:
         """Пересылает клавиши активной сессии (только маршрут workspace)."""

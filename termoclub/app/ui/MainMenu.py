@@ -25,6 +25,7 @@ class MainMenu:
         on_new_window: Callable[[], None] | None = None,
         on_new_session: Callable[[], None] | None = None,
         on_new_gpu_session: Callable[[], None] | None = None,
+        on_open_settings: Callable[[], None] | None = None,
         on_info: Callable[[str], None] | None = None,
         on_exit: Callable[[], None] | None = None,
     ) -> None:
@@ -33,6 +34,7 @@ class MainMenu:
         self.on_new_window = on_new_window
         self.on_new_session = on_new_session
         self.on_new_gpu_session = on_new_gpu_session
+        self.on_open_settings = on_open_settings
         self.on_info = on_info
         self.on_exit = on_exit
 
@@ -102,19 +104,43 @@ class MainMenu:
         settings_menu = ft.SubmenuButton(
             content=ft.Text("Settings"),
             controls=[
-                # Пример вложенного подменю.
+                self._item(
+                    "Open Settings Tab",
+                    "gear",
+                    (lambda: self.on_open_settings() if self.on_open_settings else None),
+                ),
+                ft.Divider(),
+                # Настройки открываются вкладкой в рабочей области, а не
+                # отдельным окном, поэтому здесь только быстрые переходы.
                 ft.SubmenuButton(
                     content=ft.Text("Preferences"),
                     controls=[
                         self._item(
                             "Appearance",
-                            "circle-info",
-                            lambda: info("Appearance settings are not implemented yet."),
+                            "palette",
+                            (
+                                lambda: self.on_open_settings("appearance")
+                                if self.on_open_settings
+                                else None
+                            ),
                         ),
                         self._item(
                             "Terminal",
                             "terminal",
-                            lambda: info("Terminal settings are not implemented yet."),
+                            (
+                                lambda: self.on_open_settings("terminal-pyte")
+                                if self.on_open_settings
+                                else None
+                            ),
+                        ),
+                        self._item(
+                            "Plugins",
+                            "puzzle-piece",
+                            (
+                                lambda: self.on_open_settings("plugins")
+                                if self.on_open_settings
+                                else None
+                            ),
                         ),
                     ],
                 ),

@@ -1,0 +1,80 @@
+{
+  "slug": "terminal-smartcli",
+  "title": "Terminal Smartcli",
+  "icon": "bolt",
+  "description": "smartcli-toolkit renderer: PTY and screen emulation from smartcli_core.",
+  "order": 40,
+  "settings": {
+    "font_family": {
+      "type": "choice",
+      "label": "Font family",
+      "default": "JetBrains Mono",
+      "choices": [
+        { "value": "JetBrains Mono", "label": "JetBrains Mono" }
+      ],
+      "applier": "terminal_appearance"
+    },
+    "font_size": {
+      "type": "integer",
+      "label": "Font size",
+      "default": 13,
+      "min": 8,
+      "max": 32,
+      "unit": "px",
+      "applier": "terminal_appearance"
+    },
+    "padding": {
+      "type": "integer",
+      "label": "Padding",
+      "default": 8,
+      "min": 0,
+      "max": 32,
+      "unit": "px",
+      "applier": "terminal_appearance"
+    },
+    "foreground": {
+      "type": "color",
+      "label": "Default text colour",
+      "default": "#d8dee9",
+      "applier": "terminal_appearance"
+    },
+    "background": {
+      "type": "color",
+      "label": "Default background",
+      "default": "#000000",
+      "applier": "terminal_appearance"
+    },
+    "default_columns": {
+      "type": "integer",
+      "label": "Default columns",
+      "description": "Initial PTY width before the first layout pass.",
+      "default": 80,
+      "min": 20,
+      "max": 400
+    },
+    "default_lines": {
+      "type": "integer",
+      "label": "Default lines",
+      "description": "Initial PTY height before the first layout pass.",
+      "default": 24,
+      "min": 4,
+      "max": 200
+    },
+    "use_adaptive_cursor": {
+      "type": "boolean",
+      "label": "Adaptive cursor keys",
+      "description": "Send SS3 arrows when an application requests DECCKM.",
+      "default": false
+    },
+    "close_timeout": {
+      "type": "number",
+      "label": "Close timeout",
+      "description": "How long to wait for a shell before SIGKILL.",
+      "default": 1.0,
+      "min": 0.1,
+      "max": 10.0,
+      "step": 0.1,
+      "unit": "s"
+    }
+  }
+}

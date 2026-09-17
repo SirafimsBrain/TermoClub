@@ -39,11 +39,18 @@ def _rdp(**kwargs) -> WorkspaceItem:
     return RdpSession(**kwargs)
 
 
+def _settings(**kwargs) -> WorkspaceItem:
+    from app.pages.settings import SettingsSession
+
+    return SettingsSession(**kwargs)
+
+
 _REGISTRY: dict[str, Callable[..., WorkspaceItem]] = {
     "terminal": _terminal,  # pyte + Flet: чистый Python, работает в stock-клиенте
     "terminal-gpu": _terminal_gpu,  # smartcli-toolkit: PTY и экран из smartcli_core
     "editor": _editor,
     "rdp": _rdp,
+    "settings": _settings,  # вкладка настроек (двухколоночный layout)
 }
 
 

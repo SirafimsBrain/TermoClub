@@ -1,0 +1,108 @@
+{
+  "slug": "global",
+  "title": "Global",
+  "icon": "globe",
+  "description": "Application-wide behaviour and defaults.",
+  "order": 10,
+  "settings": {
+    "language": {
+      "type": "choice",
+      "label": "Language",
+      "description": "Interface language.",
+      "default": "en",
+      "choices": [
+        { "value": "en", "label": "English" },
+        { "value": "ru", "label": "Русский" }
+      ],
+      "requires_restart": true
+    },
+    "theme_mode": {
+      "type": "choice",
+      "label": "Theme mode",
+      "description": "Light, dark or follow the system setting.",
+      "default": "dark",
+      "choices": [
+        { "value": "system", "label": "System" },
+        { "value": "light", "label": "Light" },
+        { "value": "dark", "label": "Dark" }
+      ],
+      "applier": "theme_mode"
+    },
+    "startup_session": {
+      "type": "choice",
+      "label": "Startup session",
+      "description": "Session opened automatically on launch.",
+      "default": "terminal",
+      "choices": [
+        { "value": "none", "label": "None" },
+        { "value": "terminal", "label": "Terminal (pyte)" },
+        { "value": "terminal-gpu", "label": "Terminal (smartcli)" }
+      ],
+      "requires_restart": true
+    },
+    "confirm_on_exit": {
+      "type": "boolean",
+      "label": "Confirm on exit",
+      "description": "Ask for confirmation before closing the app.",
+      "default": true
+    },
+    "autosave": {
+      "type": "boolean",
+      "label": "Autosave settings",
+      "description": "Write changes immediately instead of the Save button.",
+      "default": true
+    },
+    "log_level": {
+      "type": "choice",
+      "label": "Log level",
+      "description": "Verbosity of the application log.",
+      "default": "INFO",
+      "choices": [
+        { "value": "DEBUG", "label": "Debug" },
+        { "value": "INFO", "label": "Info" },
+        { "value": "WARNING", "label": "Warning" },
+        { "value": "ERROR", "label": "Error" }
+      ],
+      "applier": "log_level"
+    },
+    "log_directory": {
+      "type": "directory",
+      "label": "Log directory",
+      "description": "Where rotating log files are written.",
+      "default": ""
+    },
+    "session_limit": {
+      "type": "integer",
+      "label": "Open tab limit",
+      "description": "Oldest inactive tabs are closed above this limit.",
+      "default": 10,
+      "min": 1,
+      "max": 50
+    },
+    "workspace_directory": {
+      "type": "directory",
+      "label": "Default directory",
+      "description": "Working directory for new sessions.",
+      "default": ""
+    },
+    "shell": {
+      "type": "string",
+      "label": "Shell",
+      "description": "Executable used by internal terminals (empty = system shell).",
+      "default": ""
+    },
+    "update_check_date": {
+      "type": "date",
+      "label": "Next update check",
+      "description": "Date when the application may check for updates.",
+      "default": ""
+    },
+    "documentation_link": {
+      "type": "link",
+      "link_type": "url",
+      "label": "Documentation",
+      "description": "Project documentation address.",
+      "default": "https://github.com/termoclub"
+    }
+  }
+}

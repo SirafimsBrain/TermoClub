@@ -1,0 +1,47 @@
+{
+  "slug": "plugins",
+  "title": "Plugins",
+  "icon": "puzzle-piece",
+  "description": "Plugin discovery and per-plugin settings.",
+  "order": 60,
+  "settings": {
+    "enable_plugins": {
+      "type": "boolean",
+      "label": "Enable plugins",
+      "description": "Load plugin settings and extensions at startup.",
+      "default": true
+    },
+    "auto_discover": {
+      "type": "boolean",
+      "label": "Auto-discover plugins",
+      "description": "Scan ~/.termoclub/plugins on every start.",
+      "default": true
+    },
+    "disabled_plugins": {
+      "type": "multi_choice",
+      "label": "Disabled plugins",
+      "description": "Discovered plugins that stay switched off.",
+      "default": [],
+      "choices": []
+    },
+    "plugin_directory": {
+      "type": "directory",
+      "label": "Plugin directory",
+      "description": "Where plugin folders are looked up (empty = profile).",
+      "default": ""
+    },
+    "allow_remote_plugins": {
+      "type": "boolean",
+      "label": "Allow remote plugins",
+      "description": "Permit installing plugins from remote sources.",
+      "default": false
+    },
+    "update_manifest_link": {
+      "type": "link",
+      "link_type": "url",
+      "label": "Update manifest",
+      "description": "Address of the plugin update manifest.",
+      "default": ""
+    }
+  }
+}

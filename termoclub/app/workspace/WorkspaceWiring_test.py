@@ -34,6 +34,19 @@ def _tabs(app: TermoClubApp) -> list:
     return [c for c in app.tab_bar._row.controls if isinstance(c, ft.Container)]
 
 
+@pytest.fixture(autouse=True)
+def _isolated_profile(tmp_path, monkeypatch):
+    """Уводит профиль приложения в tmp: тесты не трогают `~/.termoclub`.
+
+    `TermoClubApp` создаёт хранилище настроек от профиля по умолчанию,
+    поэтому корень подменяется до сборки приложения.
+    """
+    from core.storage.backends.ProfileBackend import ProfileBackend
+
+    monkeypatch.setattr(ProfileBackend, "default", classmethod(lambda cls: cls(tmp_path)))
+    return tmp_path
+
+
 def _rendered(item) -> str:  # type: ignore[no-untyped-def]
     """Собирает текст, который реально уходит в спаны экрана терминала."""
     return "".join(span.text or "" for span in item._view._text.spans)
@@ -270,3 +283,156 @@ def test_resize_of_the_window_refits_the_active_tab() -> None:
     assert (item._screen.columns, item._screen.lines) == item._view.grid_size(
         *small_area
     )
+def test_settings_menu_opens_a_single_workspace_tab() -> None:
+    """Settings из главного меню — обычная вкладка workspace, и она одна.
+
+    Повторный выбор раздела не плодит дубликаты: вкладка активируется, а
+    выбранная категория переключается в уже открытом экране.
+    """
+    app = TermoClubApp(_StubPage())  # type: ignore[arg-type]
+    app.start()
+
+    app._open_settings()
+    app._refresh_workspace()
+    assert [item.kind for item in app.manager.sessions] == ["settings"]
+    assert len(_tabs(app)) == 1
+
+    app._open_settings("terminal-pyte")
+    app._refresh_workspace()
+    assert len(app.manager.sessions) == 1
+    session = app.manager.get_active()
+    assert session is not None and session.kind == "settings"
+    assert session.view is not None and session.view.panel.slug == "terminal-pyte"
+
+
+def test_settings_route_maps_to_the_settings_tab() -> None:
+    """Маршрут `/settings` открывает ту же вкладку, что и пункт меню."""
+    app = TermoClubApp(_StubPage())  # type: ignore[arg-type]
+    app.start()
+
+    app.route_to_workspace("/settings")
+    assert [item.kind for item in app.manager.sessions] == ["settings"]
+    assert app._route == "/settings"
+
+
+def test_settings_change_reaches_the_profile_file() -> None:
+    """Правка в виджете доходит до хранилища и до файла профиля."""
+    app = TermoClubApp(_StubPage())  # type: ignore[arg-type]
+    app.start()
+    app._open_settings("global")
+    session = app.manager.get_active()
+    assert session is not None and session.view is not None
+
+    row = next(r for r in session.view.panel.rows if r.spec.key == "log_level")
+    assert row.commit("DEBUG") is True
+    assert app.settings.get("global", "log_level") == "DEBUG"
+
+
+def test_settings_change_is_applied_to_live_terminal() -> None:
+    """Изменение внешнего вида применяется к уже открытой вкладке терминала."""
+    app = TermoClubApp(_StubPage())  # type: ignore[arg-type]
+    app.start()
+    item = app.manager.open("terminal", title="Terminal (pyte)")
+    app._refresh_workspace()
+    before = item._view._font_size
+
+    app.settings.set("terminal-pyte", "font_size", before + 4, save=False)
+    assert app.applier.apply_key("terminal-pyte", "font_size") is True
+    assert item._view._font_size == before + 4
+
+
+def test_settings_survive_a_restart() -> None:
+    """Настройка, сохранённая вкладкой, видна после перезапуска приложения."""
+    first = TermoClubApp(_StubPage())  # type: ignore[arg-type]
+    first.start()
+    first.settings.set("terminal-pyte", "font_size", 21, save=True)
+
+    second = TermoClubApp(_StubPage())  # type: ignore[arg-type]
+    second.start()
+    assert second.settings.get("terminal-pyte", "font_size") == 21
+
+
+def test_widget_change_subscription_reaches_the_applier() -> None:
+    """Правка виджета доходит до applier'а через подписку хранилища."""
+    app = TermoClubApp(_StubPage())  # type: ignore[arg-type]
+    app.start()
+    app._open_settings("global")
+    session = app.manager.get_active()
+    assert session is not None and session.view is not None
+
+    row = next(r for r in session.view.panel.rows if r.spec.key == "log_level")
+    assert row.commit("WARNING") is True
+    import logging
+
+    assert logging.getLogger().level == logging.WARNING
+
+
+def test_closed_settings_tab_unsubscribes_from_the_store() -> None:
+    """Закрытая вкладка отписывается: хранилище не держит её экран."""
+    app = TermoClubApp(_StubPage())  # type: ignore[arg-type]
+    app.start()
+    app._open_settings("global")
+    session = app.manager.get_active()
+    assert session is not None
+    before = app.settings.listener_count
+
+    app.manager.close(session.session_id)
+    assert app.settings.listener_count == before - 1
+
+
+def test_startup_scan_picks_up_plugin_settings(tmp_path) -> None:
+    """Плагин из профиля подхватывается автоматически при старте."""
+    import json
+
+    from core.settings.PluginSettingsScanner import SCHEMA_FILE
+
+    plugin = tmp_path / "plugins" / "demo"
+    plugin.mkdir(parents=True)
+    (plugin / SCHEMA_FILE).write_text(
+        json.dumps(
+            {
+                "slug": "demo-plugin",
+                "title": "Demo",
+                "settings": {
+                    "greeting": {"type": "string", "label": "Greeting", "default": "hi"}
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    app = TermoClubApp(_StubPage())  # type: ignore[arg-type]
+    app.start()
+    assert app.settings.schema.find("demo-plugin") is None
+
+    asyncio.run(app._bootstrap())
+    assert app.settings.schema.find("demo-plugin") is not None
+
+
+def test_startup_scan_honours_disabled_plugins(tmp_path) -> None:
+    """Отключённые плагины при старте не читаются из профиля."""
+    import json
+
+    from core.settings.PluginSettingsScanner import SCHEMA_FILE
+
+    plugin = tmp_path / "plugins" / "demo"
+    plugin.mkdir(parents=True)
+    (plugin / SCHEMA_FILE).write_text(
+        json.dumps(
+            {
+                "slug": "demo-plugin",
+                "title": "Demo",
+                "settings": {
+                    "greeting": {"type": "string", "label": "Greeting", "default": "hi"}
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    app = TermoClubApp(_StubPage())  # type: ignore[arg-type]
+    app.start()
+    app.settings.set("plugins", "enable_plugins", False)
+
+    app._scan_plugins()
+    assert app.settings.schema.find("demo-plugin") is None

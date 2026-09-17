@@ -31,6 +31,9 @@ class SmartCLITerminalSession(TerminalSession):
 
     KIND = "terminal-gpu"
 
+    #: У этого рендера свой раздел настроек внешнего вида.
+    APPEARANCE_CATEGORY = "terminal-smartcli"
+
     @property
     def icon(self) -> str:
         """Имя иконки Font Awesome для вкладки/карточки."""

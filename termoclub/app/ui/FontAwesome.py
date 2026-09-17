@@ -42,6 +42,25 @@ _ICONS: dict[str, tuple[int, str]] = {
     "circle-check": (0xF058, "FA Solid"),
     "grip-vertical": (0xF58E, "FA Solid"),
     "window-maximize": (0xF2D0, "FA Solid"),
+    # Категории настроек: иконка задаётся схемой, поэтому набор шире
+    # базового интерфейса.
+    "globe": (0xF0AC, "FA Solid"),
+    "palette": (0xF53F, "FA Solid"),
+    "bolt": (0xF0E7, "FA Solid"),
+    "wrench": (0xF0AD, "FA Solid"),
+    "sliders": (0xF1DE, "FA Solid"),
+    "font": (0xF031, "FA Solid"),
+    "sun": (0xF185, "FA Solid"),
+    "moon": (0xF186, "FA Solid"),
+    "link": (0xF0C1, "FA Solid"),
+    "calendar": (0xF133, "FA Solid"),
+    "image": (0xF03E, "FA Solid"),
+    "clock-rotate-left": (0xF1DA, "FA Solid"),
+    "flask": (0xF0C3, "FA Solid"),
+    "plug": (0xF1E6, "FA Solid"),
+    "star": (0xF005, "FA Solid"),
+    "folder-open": (0xF07C, "FA Solid"),
+    "wand-magic-sparkles": (0xE2CA, "FA Solid"),
 }
 
 

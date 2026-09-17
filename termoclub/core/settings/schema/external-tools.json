@@ -1,0 +1,61 @@
+{
+  "slug": "external-tools",
+  "title": "External tools",
+  "icon": "wrench",
+  "description": "External terminal emulators and helper programs.",
+  "order": 50,
+  "settings": {
+    "active_terminal": {
+      "type": "choice",
+      "label": "Active terminal",
+      "description": "Implementation used for New Tab / New Window.",
+      "default": "ghostty",
+      "choices": [
+        { "value": "ghostty", "label": "Ghostty" },
+        { "value": "kitty", "label": "Kitty" }
+      ],
+      "applier": "active_terminal"
+    },
+    "ghostty_executable": {
+      "type": "link",
+      "link_type": "file",
+      "label": "Ghostty executable",
+      "description": "Path to the ghostty binary (empty = search PATH).",
+      "default": "ghostty"
+    },
+    "kitty_executable": {
+      "type": "link",
+      "link_type": "file",
+      "label": "Kitty executable",
+      "default": "kitty"
+    },
+    "launch_timeout": {
+      "type": "integer",
+      "label": "Launch timeout",
+      "description": "How long to wait for an external terminal to start.",
+      "default": 30,
+      "min": 1,
+      "max": 120,
+      "unit": "s"
+    },
+    "open_new_window_by_default": {
+      "type": "boolean",
+      "label": "Prefer new windows",
+      "description": "Open a window instead of a tab where supported.",
+      "default": false
+    },
+    "editor_executable": {
+      "type": "link",
+      "link_type": "file",
+      "label": "External editor",
+      "description": "Program used to open files outside the app.",
+      "default": ""
+    },
+    "working_directory": {
+      "type": "directory",
+      "label": "Working directory",
+      "description": "Directory external tools start in.",
+      "default": ""
+    }
+  }
+}

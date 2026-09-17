@@ -1,0 +1,103 @@
+{
+  "slug": "terminal-pyte",
+  "title": "Terminal PYTE",
+  "icon": "terminal",
+  "description": "Pure-Python renderer (pyte + Flet): font, colours, input.",
+  "order": 30,
+  "settings": {
+    "font_family": {
+      "type": "choice",
+      "label": "Font family",
+      "description": "Monospace family from the bundled assets.",
+      "default": "JetBrains Mono",
+      "choices": [
+        { "value": "JetBrains Mono", "label": "JetBrains Mono" }
+      ],
+      "applier": "terminal_appearance"
+    },
+    "font_size": {
+      "type": "integer",
+      "label": "Font size",
+      "description": "Glyph size in logical pixels.",
+      "default": 13,
+      "min": 8,
+      "max": 32,
+      "step": 1,
+      "unit": "px",
+      "applier": "terminal_appearance"
+    },
+    "line_height": {
+      "type": "number",
+      "label": "Line height",
+      "description": "Row height as a multiplier of the font size.",
+      "default": 1.25,
+      "min": 1.0,
+      "max": 2.0,
+      "step": 0.05,
+      "applier": "terminal_appearance"
+    },
+    "padding": {
+      "type": "integer",
+      "label": "Padding",
+      "description": "Inner padding of the terminal area.",
+      "default": 8,
+      "min": 0,
+      "max": 32,
+      "unit": "px",
+      "applier": "terminal_appearance"
+    },
+    "foreground": {
+      "type": "color",
+      "label": "Default text colour",
+      "default": "#d8dee9",
+      "applier": "terminal_appearance"
+    },
+    "background": {
+      "type": "color",
+      "label": "Default background",
+      "default": "#000000",
+      "applier": "terminal_appearance"
+    },
+    "cursor_style": {
+      "type": "choice",
+      "label": "Cursor style",
+      "description": "How the cursor cell is painted.",
+      "default": "block",
+      "choices": [
+        { "value": "block", "label": "Block (inverted cell)" },
+        { "value": "none", "label": "Hidden" }
+      ],
+      "applier": "terminal_appearance"
+    },
+    "refresh_rate": {
+      "type": "integer",
+      "label": "Refresh rate",
+      "description": "Maximum screen redraws per second.",
+      "default": 20,
+      "min": 5,
+      "max": 60,
+      "unit": "Hz",
+      "applier": "terminal_refresh"
+    },
+    "scrollback": {
+      "type": "integer",
+      "label": "Scrollback",
+      "description": "Lines of history kept in the screen buffer.",
+      "default": 1000,
+      "min": 0,
+      "max": 10000,
+      "requires_restart": true
+    },
+    "copy_on_select": {
+      "type": "boolean",
+      "label": "Copy on select",
+      "default": false
+    },
+    "bell": {
+      "type": "boolean",
+      "label": "Terminal bell",
+      "description": "React to BEL from programs.",
+      "default": false
+    }
+  }
+}

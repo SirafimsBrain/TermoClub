@@ -81,6 +81,9 @@ class TerminalSession(WorkspaceItem):
     FOCUS_ATTEMPTS = 3
     FOCUS_RETRY = 0.02
 
+    #: Раздел настроек, который управляет внешним видом этой вкладки.
+    APPEARANCE_CATEGORY = "terminal-pyte"
+
     def __init__(
         self,
         title: str = "Terminal",
@@ -91,6 +94,7 @@ class TerminalSession(WorkspaceItem):
         rows: int = 24,
         session_id: str | None = None,
         on_terminated: Callable[[str], None] | None = None,
+        appearance: dict | None = None,
     ) -> None:
         super().__init__(title, session_id)
         self._bridge = self._create_bridge(shell, args, cwd, cols, rows)
@@ -99,7 +103,9 @@ class TerminalSession(WorkspaceItem):
             on_bytes=self._send_input,
             on_resize=self.resize,
             on_focus_request=self.focus_input,
+            **self._appearance_kwargs(appearance),
         )
+        self._refresh_interval = self.REFRESH_MIN_INTERVAL
         self._page: ft.Page | None = None
         self._clipboard = None
         self._last_refresh = 0.0
@@ -113,6 +119,46 @@ class TerminalSession(WorkspaceItem):
     @property
     def icon(self) -> str:
         return "terminal"
+
+    @property
+    def appearance_category(self) -> str:
+        """Раздел настроек, управляющий внешним видом вкладки."""
+        return self.APPEARANCE_CATEGORY
+
+    def apply_appearance(self, appearance: dict) -> None:
+        """Применяет внешний вид из настроек к живой вкладке.
+
+        После смены шрифта и отступов сетка пересчитывается по последнему
+        известному размеру контейнера: иначе терминал остался бы с прежним
+        числом колонок и часть области пустовала бы.
+        """
+        self._view.configure(appearance)
+        self._view.recompute_size()
+        self._refresh(force=True)
+        logger.info("TerminalSession %s: appearance applied", self.session_id)
+
+    def apply_refresh_rate(self, per_second: int) -> None:
+        """Меняет частоту перерисовки экрана (Гц) для этой вкладки."""
+        if per_second <= 0:
+            return
+        self._refresh_interval = 1.0 / per_second
+        logger.info(
+            "TerminalSession %s: refresh rate %d Hz", self.session_id, per_second
+        )
+
+    def _appearance_kwargs(self, appearance: dict | None) -> dict:
+        """Отбирает из настроек те ключи, которые понимает `TerminalView`."""
+        known = (
+            "font_family",
+            "font_size",
+            "line_height",
+            "padding",
+            "foreground",
+            "background",
+            "cursor_style",
+        )
+        source = appearance or {}
+        return {key: source[key] for key in known if source.get(key) not in (None, "")}
 
     @property
     def display_text(self) -> str:
@@ -235,7 +281,7 @@ class TerminalSession(WorkspaceItem):
 
     def _refresh(self, force: bool = False) -> None:
         now = time.monotonic()
-        if not force and now - self._last_refresh < self.REFRESH_MIN_INTERVAL:
+        if not force and now - self._last_refresh < self._refresh_interval:
             self._schedule_refresh()
             return
         self._last_refresh = now
@@ -253,7 +299,7 @@ class TerminalSession(WorkspaceItem):
         self._refresh_task = self._page.run_task(self._flush_refresh)
 
     async def _flush_refresh(self) -> None:
-        await asyncio.sleep(self.REFRESH_MIN_INTERVAL)
+        await asyncio.sleep(self._refresh_interval)
         self._refresh_task = None
         self._refresh(force=True)
 
