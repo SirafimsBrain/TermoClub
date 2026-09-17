@@ -1,8 +1,5 @@
 # Runtime dependencies of TermoClub.
 #
-# `flet` держим ниже 1.0: на PyPI уже есть 1.0.0, а проект проверялся только
-# на линии 0.86 (там же `InputBorder.NONE` без предупреждений). Верхняя
-# граница не даёт чистой установке подтянуть непроверенную мажорную версию.
-flet>=0.86,<1.0
-smartcli-toolkit==0.2.3
-pyte==0.8.2
+flet
+smartcli-toolkit
+pyte
