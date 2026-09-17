@@ -6,6 +6,13 @@
 Варианты берутся из схемы, но схема может наполнять их динамически
 (например, `plugins.disabled_plugins` — найденные плагины), поэтому список
 перестраивается методом `refresh_choices`.
+
+`SegmentedButton.selected` заполняется списком, а не множеством. Во Flet 1.0
+поле объявлено как `list[str]`, и `set` конструктор принимает, но сериализация
+в msgpack на нём падает («can not serialize 'set' object»): кодек Flet особо
+обрабатывает только `list`/`dict`/dataclass. Для `plugins.disabled_plugins`
+(варианты приходят пустыми, значит выбирается режим сегментов) это ломало
+отрисовку вкладки настроек.
 """
 from __future__ import annotations
 
@@ -75,7 +82,7 @@ class MultiChoiceSettingControl(SettingControl):
                     ft.Segment(value=choice.value, label=ft.Text(choice.label, size=12))
                     for choice in self.spec.choices
                 ],
-                selected=set(selected),
+                selected=list(selected),
                 allow_multiple_selection=True,
                 allow_empty_selection=True,
                 show_selected_icon=False,
@@ -89,7 +96,7 @@ class MultiChoiceSettingControl(SettingControl):
         """Переносит выбранные варианты в редактор."""
         selected = _selected(value)
         if self._segments is not None:
-            self._segments.selected = set(selected)
+            self._segments.selected = list(selected)
             self._safe_update(self._segments)
             return
         for key, box in self._checks.items():
@@ -104,7 +111,7 @@ class MultiChoiceSettingControl(SettingControl):
                 ft.Segment(value=choice.value, label=ft.Text(choice.label, size=12))
                 for choice in self.spec.choices
             ]
-            self._segments.selected = set(selected)
+            self._segments.selected = list(selected)
             self._safe_update(self._segments)
             return
         host = self._checks_host()
@@ -140,7 +147,7 @@ class MultiChoiceSettingControl(SettingControl):
 
     def _on_segments(self, _event: ft.ControlEvent) -> None:
         """Пишет выбранные сегменты (порядок — как в схеме)."""
-        chosen = self._segments.selected or set()
+        chosen = self._segments.selected or []
         self.commit([c.value for c in self.spec.choices if c.value in chosen])
 
     def _on_check(self, _event: ft.ControlEvent) -> None:

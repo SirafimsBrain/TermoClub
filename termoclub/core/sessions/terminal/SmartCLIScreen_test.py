@@ -2,7 +2,7 @@
 """Тесты экрана-адаптера smartcli (ScreenModel -> интерфейс TerminalView)."""
 from __future__ import annotations
 
-from smartcli_core import ScreenModel
+from smartcli_core import CellAttrs, ScreenModel
 
 from core.sessions.terminal.SmartCLIScreen import SmartCLIScreen
 
@@ -41,6 +41,31 @@ def test_row_returns_pyte_cells_with_full_attributes() -> None:
     assert cells[0].bold is True
     assert cells[0].underscore is True
     assert cells[1].data == " "
+
+
+class _ModelWithoutScreen:
+    """Модель без публичного `screen` — эмуляция рефакторинга smartcli."""
+
+    cols = 5
+    rows = 2
+    display = ["X    ", "     "]
+
+    def row_cells(self, row: int) -> list[CellAttrs]:
+        """Урезанные ячейки: начертаний в `CellAttrs` нет вовсе."""
+        first = CellAttrs("X", "default", "default", True, False)
+        return [first] + [CellAttrs(" ", "default", "default", False, False)] * 4
+
+
+def test_row_falls_back_when_the_model_hides_its_screen() -> None:
+    """`screen` — деталь реализации smartcli: адаптер деградирует, а не падает."""
+    screen = SmartCLIScreen(_ModelWithoutScreen())  # type: ignore[arg-type]
+
+    assert (screen.columns, screen.lines) == (5, 2)
+    cells = screen.row(0)
+    assert len(cells) == 5
+    assert cells[0].data == "X"
+    assert cells[0].bold is True
+    assert cells[0].underscore is False  # на запасном пути начертания теряются
 
 
 def test_feed_bytes_is_a_no_op() -> None:

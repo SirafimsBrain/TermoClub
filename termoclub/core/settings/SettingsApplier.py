@@ -132,7 +132,7 @@ class SettingsApplier:
 
     def _apply_log_level(self, slug: str, value: str) -> None:
         """Уровень логирования централизованного логгера."""
-        level = logging.getLevelNamesMapping().get(str(value).upper())
+        level = _level_by_name(str(value).upper())
         if level is None:
             logger.warning("SettingsApplier: unknown log level %r", value)
             return
@@ -192,6 +192,20 @@ class SettingsApplier:
             for session in sessions
             if getattr(session, "appearance_category", "") == category
         ]
+
+
+def _level_by_name(name: str) -> int | None:
+    """Имя уровня логирования -> числовой уровень (Python 3.10 и новее).
+
+    `logging.getLevelNamesMapping()` появился только в 3.11, поэтому без него
+    имя разворачивается через `getLevelName()`: для известных имён он
+    возвращает число, для неизвестных — строку вида «Level NOPE».
+    """
+    mapping = getattr(logging, "getLevelNamesMapping", None)
+    if mapping is not None:
+        return mapping().get(name)
+    level = logging.getLevelName(name)
+    return level if isinstance(level, int) else None
 
 
 def _theme_mode(value: str) -> Any:

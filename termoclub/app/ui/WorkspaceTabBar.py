@@ -39,7 +39,7 @@ class WorkspaceTabBar:
             if data.active
             else ft.Colors.TRANSPARENT,
             border_radius=6,
-            padding=ft.Padding(8, 4, 4, 4),
+            padding=ft.Padding.only(left=8, top=4, right=4, bottom=4),
             on_click=handle_select,
             content=ft.Row(
                 [

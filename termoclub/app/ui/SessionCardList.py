@@ -56,7 +56,7 @@ class SessionCardList:
                                 "grip-vertical", size=14, color=ft.Colors.GREY
                             ),
                             tooltip="Drag to reorder",
-                            padding=ft.Padding(0, 8, 0, 8),
+                            padding=ft.Padding.symmetric(vertical=8),
                         ),
                     ),
                     ft.Container(content=card, expand=True),

@@ -18,8 +18,26 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+from typing import NamedTuple
 
 import pyte
+
+
+class _Cell(NamedTuple):
+    """Ячейка строки в форме, которую читает `TerminalView`.
+
+    Запасной путь отрисовки: `CellAttrs` из smartcli урезан (нет `italics`,
+    `underscore` и `strikethrough`), поэтому здесь они всегда выключены.
+    """
+
+    data: str
+    fg: str
+    bg: str
+    bold: bool
+    reverse: bool
+    italics: bool = False
+    underscore: bool = False
+    strikethrough: bool = False
 
 
 class SmartCLIScreen:
@@ -75,14 +93,20 @@ class SmartCLIScreen:
             lines.pop()
         return "\n".join(lines)
 
-    def row(self, y: int) -> Sequence[pyte.screens.Char]:
+    def row(self, y: int) -> Sequence[pyte.screens.Char | _Cell]:
         """Ячейки строки `y` (длиной `columns`, пустые — пробелы).
 
         Берём буфер pyte напрямую: `CellAttrs` из smartcli теряет начертания
         (`italics`/`underscore`/`strikethrough`), а `TerminalView` рисует их
         в спанах. `row_cells()` к тому же строит новый NamedTuple на каждую
         ячейку — на 80x24 это лишние 1920 объектов на кадр.
+
+        `ScreenModel.screen` — деталь реализации smartcli, а не её публичный
+        контракт. Если апстрим её переименует или спрячет, отрисовка перейдёт
+        на `row_cells()` (без курсива и подчёркивания) вместо падения.
         """
-        screen = self._model.screen
-        buffer = screen.buffer[y]
-        return [buffer[x] for x in range(screen.columns)]
+        screen = getattr(self._model, "screen", None)
+        if screen is not None and hasattr(screen, "buffer"):
+            row = screen.buffer[y]
+            return [row[x] for x in range(screen.columns)]
+        return [_Cell(*cell) for cell in self._model.row_cells(y)]

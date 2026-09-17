@@ -40,13 +40,18 @@ from core.storage.FileManager import FileManager
 
 
 class _StubPage:
-    """Минимальная страница Flet: сервисы, диалоги, добавление контролов."""
+    """Минимальная страница Flet: сервисы, диалоги, добавление контролов.
+
+    У реального `ft.Page` нет атрибута `dialogs`: диалоги живут во внутреннем
+    стеке, а наружу торчит только `show_dialog(DialogControl)`. Поэтому
+    заглушка записывает то, что получил `show_dialog`, и тесты проверяют
+    именно этот контракт — что контрол является `ft.DialogControl`.
+    """
 
     def __init__(self) -> None:
         self.fonts: dict | None = None
         self.services: list = []
-        self.dialogs: list = []
-        self.overlays: list = []
+        self.shown_dialogs: list = []
 
     def update(self) -> None:
         pass
@@ -55,7 +60,7 @@ class _StubPage:
         return None
 
     def show_dialog(self, dialog) -> None:  # type: ignore[no-untyped-def]
-        self.dialogs.append(dialog)
+        self.shown_dialogs.append(dialog)
 
 
 def _store(tmp_path: Path, autosave: bool = False, extra: dict | None = None) -> SettingsStore:
@@ -214,7 +219,9 @@ def test_datetime_picker_writes_selected_value(tmp_path: Path) -> None:
     control = _built(controls, "global", "update_check_date")
 
     control._open_date(None)  # type: ignore[arg-type]
-    assert isinstance(control.page.dialogs[-1], ft.DatePicker)
+    shown = control.page.shown_dialogs[-1]
+    assert isinstance(shown, ft.DialogControl)  # тип, который принимает show_dialog
+    assert isinstance(shown, ft.DatePicker)
 
     event = SimpleEvent(datetime(2026, 5, 17))
     control._on_date_change(event)  # type: ignore[arg-type]
@@ -383,6 +390,57 @@ def test_sidebar_marks_changed_categories(tmp_path: Path) -> None:
     store.set("global", "log_level", "DEBUG")
     assert view.sidebar._is_modified("global") is True
     assert view.sidebar._is_modified("appearance") is False
+
+
+def test_multi_choice_segments_get_a_list(tmp_path: Path) -> None:
+    """Сегменты получают список: `set` во Flet 1.0 не сериализуется в msgpack.
+
+    `plugins.disabled_plugins` наполняется найденными плагинами уже после
+    сборки схемы, то есть на момент сборки вариантов нет и выбирается режим
+    сегментов. Раньше туда попадало множество, и отрисовка вкладки падала на
+    «can not serialize 'set' object».
+    """
+    _store_obj, controls = _factory(tmp_path)
+    control = _built(controls, "plugins", "disabled_plugins")
+
+    assert isinstance(control, MultiChoiceSettingControl)
+    editor = control.control_for_editor
+    assert isinstance(editor, ft.SegmentedButton)
+    assert isinstance(editor.selected, list)
+
+    control.show_value(["demo"])
+    assert editor.selected == ["demo"]
+    assert isinstance(editor.selected, list)
+
+
+def test_multi_choice_segments_write_in_schema_order(tmp_path: Path) -> None:
+    """Выбранные сегменты пишутся в порядке вариантов схемы."""
+    _store_obj, controls = _factory(
+        tmp_path,
+        extra={
+            "slug": "demo",
+            "title": "Demo",
+            "settings": {
+                "tags": {
+                    "type": "multi_choice",
+                    "label": "tags",
+                    "default": [],
+                    "choices": [
+                        {"value": "a", "label": "A"},
+                        {"value": "b", "label": "B"},
+                        {"value": "c", "label": "C"},
+                    ],
+                }
+            },
+        },
+    )
+    control = _built(controls, "demo", "tags")
+    editor = control.control_for_editor
+    assert isinstance(editor, ft.SegmentedButton)
+
+    editor.selected = ["c", "a"]
+    control._on_segments(None)  # type: ignore[arg-type]
+    assert controls.store.get("demo", "tags") == ["a", "c"]
 
 
 class SimpleEvent:
