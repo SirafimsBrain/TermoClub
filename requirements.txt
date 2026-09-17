@@ -1,5 +1,5 @@
 # Runtime dependencies of TermoClub.
 #
-flet
+flet>=1.0.0
 smartcli-toolkit
 pyte

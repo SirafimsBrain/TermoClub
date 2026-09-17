@@ -54,11 +54,8 @@ MONO_LINE_HEIGHT = 1.25
 #: Запас по колонкам на погрешность ширины знакоместа (см. `grid_size`).
 GRID_COLUMN_SLACK = 1
 
-#: Граница скрытого поля ввода. В Flet 1.0 `InputBorder.NONE` объявлен
-#: устаревшим, а его замена (`NoInputBorder`) в 0.86 ещё не существует.
-INPUT_BORDER = (
-    ft.NoInputBorder() if hasattr(ft, "NoInputBorder") else ft.InputBorder.NONE
-)
+#: Граница скрытого поля ввода.
+INPUT_BORDER = ft.NoInputBorder()
 
 #: Атрибуты пустой ячейки: (fg, bg, italics, underscore, strikethrough).
 BLANK = (DEFAULT_FG, DEFAULT_BG, False, False, False)

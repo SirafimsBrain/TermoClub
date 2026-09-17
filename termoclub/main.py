@@ -208,22 +208,13 @@ class TermoClubApp:
         active.resize_to_area(area_width, area_height)
 
     def _page_size(self) -> tuple[float, float]:
-        """Размер окна в пикселях: сама страница, иначе её окно.
-
-        `page.width`/`page.height` есть и в 0.86, и в 1.0 (там они уже
-        помечены устаревшими в пользу `page.window`), поэтому смотрим оба
-        источника — иначе после обновления Flet вкладка осталась бы без
-        пересчёта размера.
-        """
-        sources = (self.page, getattr(self.page, "window", None))
-        for source in sources:
-            if source is None:
-                continue
-            width = float(getattr(source, "width", 0) or 0)
-            height = float(getattr(source, "height", 0) or 0)
-            if width > 0 and height > 0:
-                return width, height
-        return 0.0, 0.0
+        """Размер окна в пикселях через page.window (Flet >=1.0)."""
+        win = getattr(self.page, "window", None)
+        if win is None:
+            return 0.0, 0.0
+        width = float(getattr(win, "width", 0) or 0)
+        height = float(getattr(win, "height", 0) or 0)
+        return (width, height) if width > 0 and height > 0 else (0.0, 0.0)
 
     def _on_page_resize(self, event: ft.PageResizeEvent) -> None:
         """Размер окна изменился: подгоняем сетку активного терминала."""

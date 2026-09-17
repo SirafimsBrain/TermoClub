@@ -16,6 +16,7 @@ class _StubPage:
     def __init__(self) -> None:
         self.fonts: dict | None = None
         self.added: list = []
+        self.window = SimpleNamespace(width=1200, height=800)
 
     def add(self, *controls) -> None:  # type: ignore[no-untyped-def]
         self.added.extend(controls)
@@ -277,7 +278,7 @@ def test_resize_of_the_window_refits_the_active_tab() -> None:
 
     # Показ вкладки тоже пересчитывает сетку: без явного события о размере
     # берём его у самой страницы.
-    page.width, page.height = 900, 600
+    page.window.width, page.window.height = 900, 600
     small_area = app.layout.workspace_area_size(900, 600)
     app._fit_active_terminal()
     assert (item._screen.columns, item._screen.lines) == item._view.grid_size(
