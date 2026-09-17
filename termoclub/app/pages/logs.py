@@ -15,7 +15,9 @@ def logs_content(page: ft.Page) -> ft.Control:
 
     return ft.Column(
         [
-            ft.Text("Логи", style=ft.TextThemeStyle.HEADLINE_MEDIUM),
+            # `theme_style`, а не `style`: во Flet `style` — это `TextStyle`,
+            # строка из `TextThemeStyle` ломала отрисовку на клиенте.
+            ft.Text("Логи", theme_style=ft.TextThemeStyle.HEADLINE_MEDIUM),
             ft.Text("Здесь будут отображаться логи приложения."),
             ft.TextButton("На главную", on_click=go_home),
         ],

@@ -217,6 +217,24 @@ def test_grid_size_is_the_single_source_of_truth() -> None:
     assert resized == [view.grid_size(640, 320)]
 
 
+def test_container_size_marks_the_view_as_measured() -> None:
+    """Настоящий размер контейнера — признак «оценка по окну больше не нужна».
+
+    Пока размер неизвестен (контрол не разложен или получил 0x0), запасной
+    пересчёт по размеру окна допустим; после — нет, иначе два источника
+    размера перебивают друг друга (см. `TerminalSession.resize_to_area`).
+    """
+    resized: list[tuple[int, int]] = []
+    view, _ = _view(on_resize=lambda c, l: resized.append((c, l)))
+    view.control
+    assert view.measured is False
+    view._on_size_change(_size(0, 0))
+    assert view.measured is False
+    view._on_size_change(_size(600, 200))
+    assert view.measured is True
+    assert resized
+
+
 def test_zero_size_grid_is_the_minimum() -> None:
     """Неразложенный контейнер даёт минимальную сетку, а не отрицательную."""
     view, _ = _view()

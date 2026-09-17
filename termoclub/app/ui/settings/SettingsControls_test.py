@@ -16,8 +16,10 @@ import flet as ft
 import pytest
 
 from app.pages.settings import DEFAULT_CATEGORY, SettingsPage, SettingsSession
+from app.ui.flet_contract import check_control
 from app.ui.settings.BooleanSettingControl import BooleanSettingControl
 from app.ui.settings.ChoiceSettingControl import (
+    EMPTY_CHOICES_TEXT,
     ChoiceSettingControl,
     MultiChoiceSettingControl,
 )
@@ -395,22 +397,57 @@ def test_sidebar_marks_changed_categories(tmp_path: Path) -> None:
 def test_multi_choice_segments_get_a_list(tmp_path: Path) -> None:
     """Сегменты получают список: `set` во Flet 1.0 не сериализуется в msgpack.
 
-    `plugins.disabled_plugins` наполняется найденными плагинами уже после
-    сборки схемы, то есть на момент сборки вариантов нет и выбирается режим
-    сегментов. Раньше туда попадало множество, и отрисовка вкладки падала на
+    Короткий список вариантов рисуется сегментами, и выбранное обязано быть
+    списком: `set` конструктор принимает, но кодек Flet особо обрабатывает
+    только `list`/`dict`/dataclass — отрисовка падала на
     «can not serialize 'set' object».
     """
-    _store_obj, controls = _factory(tmp_path)
-    control = _built(controls, "plugins", "disabled_plugins")
+    _store_obj, controls = _factory(
+        tmp_path,
+        extra={
+            "slug": "demo",
+            "title": "Demo",
+            "settings": {
+                "tags": {
+                    "type": "multi_choice",
+                    "label": "tags",
+                    "default": [],
+                    "choices": [{"value": "a", "label": "A"}],
+                }
+            },
+        },
+    )
+    control = _built(controls, "demo", "tags")
 
     assert isinstance(control, MultiChoiceSettingControl)
     editor = control.control_for_editor
     assert isinstance(editor, ft.SegmentedButton)
     assert isinstance(editor.selected, list)
 
-    control.show_value(["demo"])
-    assert editor.selected == ["demo"]
+    control.show_value(["a"])
+    assert editor.selected == ["a"]
     assert isinstance(editor.selected, list)
+
+
+def test_multi_choice_without_choices_shows_a_hint(tmp_path: Path) -> None:
+    """Пустой список вариантов — подсказка, а не сегменты без сегментов.
+
+    Flet отвергает `SegmentedButton` без единого сегмента на исходящей
+    валидации («segments must contain at least one visible Control»), а
+    `ValueError` из `update()` уходил наверх и ломал вкладку настроек целиком.
+    Именно в таком состоянии живёт `plugins.disabled_plugins`: варианты
+    появляются только после сканирования плагинов.
+    """
+    _store_obj, controls = _factory(tmp_path)
+    control = _built(controls, "plugins", "disabled_plugins")
+
+    assert isinstance(control, MultiChoiceSettingControl)
+    editor = control.control_for_editor
+    assert isinstance(editor, ft.Text)
+    assert editor.value == EMPTY_CHOICES_TEXT
+    control.show_value(["demo"])  # не должно падать и ничего не рисует
+    # Состояние контрола проходит валидацию клиента и сериализацию в msgpack.
+    assert check_control(editor) == []
 
 
 def test_multi_choice_segments_write_in_schema_order(tmp_path: Path) -> None:

@@ -70,6 +70,13 @@ termoclub/
 - Dependencies from `requirements.txt`: [Flet](https://flet.dev) (verified on `1.0.0`; the file itself stays unpinned), [`smartcli-toolkit`](https://pypi.org/project/smartcli-toolkit/) (verified on `0.3.2`; PTY and screen model for the `Terminal (smartcli)` tab) and `pyte` (`0.8.2`, screen emulation for the `Terminal (pyte)` tab)
 - [Ghostty](https://ghostty.org) installed and on `PATH` for the **external** terminal (menu items New Tab / New Window; Linux: `+new-window` CLI; macOS: AppleScript dictionary)
 
+## Built-in terminal: input and size
+
+- **Text input** goes through the hidden IME field of the tab (`TerminalView`), so Cyrillic, case and paste follow the OS layout. Service keys and `Ctrl+<letter>` come from `page.on_keyboard_event`, where Flet exposes only logical (US) key labels.
+- **Clipboard**: `Ctrl+Shift+V` / `Ctrl+Insert` copy the visible screen, `Ctrl+V` / `Shift+Insert` paste; plain `Ctrl+C` stays SIGINT for the shell.
+- **Cursor keys** switch to the SS3 form (`ESC O A`) while a program enables DECCKM (`smkx`), the way `mc`, `vim`, `htop` and `less` expect — the session reads that mode from the PTY output itself.
+- **Size**: the tab container is the single source of truth (`TerminalView.measured`). The window-based estimate is only a fallback for a tab that has not been laid out yet, so the grid and the PTY never disagree.
+
 ## Installation and run
 
 ```bash

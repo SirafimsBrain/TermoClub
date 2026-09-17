@@ -39,7 +39,9 @@ class SettingsPanel:
         self._categories: list[Category] = []
         self._slug = ""
         self._body = ft.Column(spacing=0, scroll=ft.ScrollMode.AUTO, expand=True)
-        self._title = ft.Text("", style=ft.TextThemeStyle.TITLE_LARGE)
+        # `theme_style` (не `style`): `style` ждёт `TextStyle`, а клиент
+        # разбирает его как map — строка из enum роняла отрисовку панели.
+        self._title = ft.Text("", theme_style=ft.TextThemeStyle.TITLE_LARGE)
         self._description = ft.Text("", size=12, color=MUTED)
         self._actions = ft.Row(spacing=8)
         self._root = ft.Column(

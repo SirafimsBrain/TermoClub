@@ -38,7 +38,9 @@ def home_content(page: ft.Page, on_status: object = None) -> ft.Control:
 
     return ft.Column(
         [
-            ft.Text("TermoClub", style=ft.TextThemeStyle.HEADLINE_MEDIUM),
+            # `theme_style`, а не `style`: во Flet `style` — это `TextStyle`,
+            # строка из `TextThemeStyle` ломала отрисовку на клиенте.
+            ft.Text("TermoClub", theme_style=ft.TextThemeStyle.HEADLINE_MEDIUM),
             ft.Text(f"Активный терминал: {get_active_terminal_name()}"),
             ft.Row(
                 [

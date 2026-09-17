@@ -59,6 +59,20 @@ SHIFTED = {
     "Tab": b"\x1b[Z",  # back-tab
 }
 
+#: Клавиши навигации в режиме application cursor keys (DECCKM).
+#: Полноэкранные программы (mc, vim, htop, less) включают его парой
+#: `CSI ? 1 h` + `ESC =` — для `xterm` это `smkx=\E[?1h\E=` в terminfo — и
+#: после этого ждут стрелки в SS3-форме (`kcuu1=\EOA`), а не `CSI A`.
+#: Проверено на живом `curses`: `ESC O A` даёт `KEY_UP`, `ESC [ A` — нет.
+APP_CURSOR = {
+    "Arrow Up": b"\x1bOA",
+    "Arrow Down": b"\x1bOB",
+    "Arrow Right": b"\x1bOC",
+    "Arrow Left": b"\x1bOD",
+    "Home": b"\x1bOH",
+    "End": b"\x1bOF",
+}
+
 #: `Ctrl` (и `Alt`) поверх служебных клавиш: `1;5` — модификатор Ctrl.
 CTRL_SPECIALS = {
     "Arrow Up": b"\x1b[1;5A",
@@ -110,6 +124,7 @@ class TerminalKeymap:
         ctrl: bool = False,
         alt: bool = False,
         meta: bool = False,
+        application_cursor: bool = False,
     ) -> bytes | None:
         """Возвращает байты для PTY или None, если клавиша не наша.
 
@@ -117,6 +132,13 @@ class TerminalKeymap:
         `ESC[1;5D`, `Alt+x` -> `ESC x`, стрелки/`F-клавиши` -> их
         escape-последовательности. Печатаемые символы без модификаторов
         сюда не относятся: их отдаёт поле ввода с учётом раскладки.
+
+        `application_cursor` — режим DECCKM, который включила сама программа
+        в PTY (`CSI ? 1 h`): тогда стрелки и `Home`/`End` уходят в SS3-форме.
+        Без этого полноэкранные программы (`mc`, `vim`, `htop`) не узнают
+        клавиши навигации: их terminfo ждёт `ESC O A`, а не `ESC [ A`.
+        Комбинации с `Ctrl`/`Alt` остаются CSI: их кодирует модификатор, а не
+        режим (`ESC[1;5A` верно в обоих режимах).
         """
         if TerminalKeymap.is_modifier(key):
             return None
@@ -127,6 +149,8 @@ class TerminalKeymap:
             return b"\x1b" + key.encode("utf-8", errors="ignore")
         if shift and key in SHIFTED:
             return SHIFTED[key]
+        if application_cursor and key in APP_CURSOR:
+            return APP_CURSOR[key]
         if key in SPECIALS:
             return SPECIALS[key]
         return None

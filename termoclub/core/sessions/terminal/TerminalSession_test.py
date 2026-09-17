@@ -284,6 +284,83 @@ def test_resize_to_area_uses_the_shared_grid_math() -> None:
     )
 
 
+def test_application_cursor_keys_follow_the_program() -> None:
+    """Режим DECCKM из PTY переключает стрелки на SS3-форму.
+
+    `xterm`-terminfo включает application cursor keys парой `CSI ? 1 h` +
+    `ESC =` (`smkx`) и ждёт после этого `ESC O A`. Проверено на живом
+    `curses`: `ESC O A` даёт `KEY_UP`, а `ESC [ A` — нет, поэтому без учёта
+    режима стрелки в `mc` и `vim` не работали.
+    """
+    session = TerminalSession()
+    written = _collected(session)
+
+    session.handle_key(_key("Arrow Up"))
+    assert written == [b"\x1b[A"]  # обычный режим — CSI
+
+    session._on_pty_data(b"\x1b[?1h\x1b=")  # программа включила app-режим
+    assert session.application_cursor_keys is True
+    session.handle_key(_key("Arrow Up"))
+    assert written[-1] == b"\x1bOA"
+    session.handle_key(_key("Arrow Left"))
+    assert written[-1] == b"\x1bOD"
+    session.handle_key(_key("Home"))
+    assert written[-1] == b"\x1bOH"
+
+    session._on_pty_data(b"\x1b[?1l")
+    assert session.application_cursor_keys is False
+    session.handle_key(_key("Arrow Up"))
+    assert written[-1] == b"\x1b[A"
+
+
+def test_application_cursor_mode_survives_a_split_chunk() -> None:
+    """Разорванная между чанками последовательность режима не теряется."""
+    session = TerminalSession()
+
+    session._on_pty_data(b"\x1b[")
+    session._on_pty_data(b"?1")
+    assert session.application_cursor_keys is False
+    session._on_pty_data(b"h\x1b=")
+    assert session.application_cursor_keys is True
+
+
+def test_container_size_wins_over_the_window_estimate() -> None:
+    """После настоящего размера контейнера оценка по окну не применяется.
+
+    Два источника размера перебивали друг друга: при одном и том же окне
+    сетка скакала (например, 74 и 78 строк), каждый скачок уходил в PTY как
+    SIGWINCH, полноэкранная программа перерисовывалась под новый размер — и
+    отображение разъезжалось.
+    """
+    session = TerminalSession(appearance={"font_size": 10})
+    session.get_content()
+    resized: list[tuple[int, int]] = []
+    session._bridge.resize = lambda c, l: resized.append((c, l))  # type: ignore[method-assign]
+
+    # Событие контейнера: сетка из настоящих пикселей.
+    session._view._on_size_change(SimpleNamespace(width=600, height=200))
+    assert (session._screen.columns, session._screen.lines) == (96, 14)
+
+    # Оценка по размеру окна (та же область, но окно шире) — игнорируется.
+    session.resize_to_area(1200, 400)
+    assert (session._screen.columns, session._screen.lines) == (96, 14)
+    assert (session._screen.columns, session._screen.lines) != session._view.grid_size(
+        1200, 400
+    )
+    assert resized == [(96, 14)]
+
+
+def test_resize_to_area_is_a_fallback_before_the_first_measurement() -> None:
+    """До события контейнера размер считается по пикселям области (запасной путь)."""
+    session = TerminalSession(appearance={"font_size": 10})
+    session.get_content()
+
+    session.resize_to_area(600, 200)
+    assert (session._screen.columns, session._screen.lines) == session._view.grid_size(
+        600, 200
+    )
+
+
 def test_content_requests_focus_for_the_hidden_field() -> None:
     """Собранный контрол сам просит фокус: без него нет ввода кириллицы.
 

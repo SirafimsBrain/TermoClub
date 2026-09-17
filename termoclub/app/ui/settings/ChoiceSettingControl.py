@@ -13,15 +13,25 @@
 обрабатывает только `list`/`dict`/dataclass. Для `plugins.disabled_plugins`
 (варианты приходят пустыми, значит выбирается режим сегментов) это ломало
 отрисовку вкладки настроек.
+
+Пустой список вариантов — не повод строить контрол без содержимого: Flet
+отвергает `SegmentedButton` без сегментов на исходящей валидации
+(«segments must contain at least one visible Control»), а `ValueError` из
+`update()` уходил наверх и ломал вкладку целиком. Пока вариантов нет,
+показываем пояснение; после пересканирования панель пересобирает строки и
+режим выбирается заново (см. `SettingsPage._rebuild_categories`).
 """
 from __future__ import annotations
 
 import flet as ft
 
-from app.ui.settings.SettingControl import SettingControl
+from app.ui.settings.SettingControl import MUTED, SettingControl
 
 #: Сколько вариантов ещё показываем сегментами, а не списком с чекбоксами.
 SEGMENT_LIMIT = 4
+
+#: Текст на месте редактора, когда вариантов ещё нет (например, плагины не найдены).
+EMPTY_CHOICES_TEXT = "No options available yet."
 
 
 class ChoiceSettingControl(SettingControl):
@@ -76,6 +86,8 @@ class MultiChoiceSettingControl(SettingControl):
         self._segments: ft.SegmentedButton | None = None
         self._checks: dict[str, ft.Checkbox] = {}
         selected = _selected(self.value)
+        if not self.spec.choices:
+            return ft.Text(EMPTY_CHOICES_TEXT, size=12, color=MUTED)
         if len(self.spec.choices) <= SEGMENT_LIMIT:
             self._segments = ft.SegmentedButton(
                 segments=[

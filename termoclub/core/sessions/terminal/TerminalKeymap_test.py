@@ -54,6 +54,38 @@ def test_shift_and_control_modify_service_keys() -> None:
     assert TerminalKeymap.to_bytes("Arrow Up", ctrl=True, alt=True) == b"\x1b\x1b[1;5A"
 
 
+def test_application_cursor_keys_use_ss3() -> None:
+    r"""В режиме DECCKM навигация уходит в SS3-форме, иначе — в CSI.
+
+    Полноэкранные программы (`mc`, `vim`, `htop`) включают application cursor
+    keys и берут стрелки из terminfo: у `xterm` это `kcuu1=\EOA` при
+    `smkx=\E[?1h\E=`. Проверено на живом `curses`: `ESC O A` даёт `KEY_UP`,
+    а `ESC [ A` — нет, поэтому без этого режима стрелки не работали.
+    """
+    assert TerminalKeymap.to_bytes("Arrow Up", application_cursor=True) == b"\x1bOA"
+    assert TerminalKeymap.to_bytes("Arrow Down", application_cursor=True) == b"\x1bOB"
+    assert TerminalKeymap.to_bytes("Arrow Right", application_cursor=True) == b"\x1bOC"
+    assert TerminalKeymap.to_bytes("Arrow Left", application_cursor=True) == b"\x1bOD"
+    assert TerminalKeymap.to_bytes("Home", application_cursor=True) == b"\x1bOH"
+    assert TerminalKeymap.to_bytes("End", application_cursor=True) == b"\x1bOF"
+
+    # Без режима форма прежняя.
+    assert TerminalKeymap.to_bytes("Arrow Up") == b"\x1b[A"
+    assert TerminalKeymap.to_bytes("Home") == b"\x1b[H"
+
+    # Клавиш вне режима он не касается.
+    assert TerminalKeymap.to_bytes("Delete", application_cursor=True) == b"\x1b[3~"
+    assert TerminalKeymap.to_bytes("Page Up", application_cursor=True) == b"\x1b[5~"
+    assert TerminalKeymap.to_bytes("F1", application_cursor=True) == b"\x1bOP"
+
+    # Комбинации кодирует модификатор: форма одна в обоих режимах.
+    assert (
+        TerminalKeymap.to_bytes("Arrow Up", ctrl=True, application_cursor=True)
+        == b"\x1b[1;5A"
+    )
+    assert TerminalKeymap.to_bytes("Arrow Left", ctrl=True) == b"\x1b[1;5D"
+
+
 def test_non_latin_key_label_does_not_crash() -> None:
     """Нелатинская метка клавиши не должна ронять раскладку.
 

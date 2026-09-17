@@ -59,7 +59,13 @@ class SettingsPage:
                 ft.Container(
                     content=ft.Column(
                         [
-                            ft.Text("Settings", style=ft.TextThemeStyle.TITLE_LARGE),
+                            # `theme_style`, а не `style`: во Flet `style` —
+                            # это `TextStyle`, и клиент разбирает его как map
+                            # (`value["weight"]`). Enum `TextThemeStyle`
+                            # сериализуется строкой, поэтому Dart падал на
+                            # сборке виджета и вкладка оставалась серой
+                            # заглушкой `ErrorWidget`.
+                            ft.Text("Settings", theme_style=ft.TextThemeStyle.TITLE_LARGE),
                             ft.Text("Application and plugin settings.", size=11, color=ft.Colors.ON_SURFACE_VARIANT),
                         ],
                         spacing=2,

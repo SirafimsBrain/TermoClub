@@ -43,6 +43,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 import time
 from collections.abc import Callable
 
@@ -84,6 +85,16 @@ class TerminalSession(WorkspaceItem):
     #: Раздел настроек, который управляет внешним видом этой вкладки.
     APPEARANCE_CATEGORY = "terminal-pyte"
 
+    #: `CSI ? 1 h` / `CSI ? 1 l` — включение и выключение application cursor
+    #: keys (DECCKM). Режим задаёт сама программа в PTY (`smkx` в terminfo),
+    #: поэтому его приходится читать из потока: без него стрелки уходят в
+    #: CSI-форме и полноэкранные программы (`mc`, `vim`) их не видят.
+    APP_CURSOR_PATTERN = re.compile(rb"\x1b\[\?1([hl])")
+
+    #: Сколько байт хвоста держать между чанками: escape-последовательность
+    #: может прийти разорванной (PTY режет вывод как угодно).
+    MODE_TAIL = 8
+
     def __init__(
         self,
         title: str = "Terminal",
@@ -114,6 +125,8 @@ class TerminalSession(WorkspaceItem):
         self._resize_task = None
         self._pending_size: tuple[int, int] | None = None
         self._pending_at = 0.0
+        self._app_cursor = False
+        self._mode_tail = b""
         self.on_terminated = on_terminated
 
     @property
@@ -272,8 +285,28 @@ class TerminalSession(WorkspaceItem):
     # --- Вывод PTY -> экран ---
 
     def _on_pty_data(self, chunk: bytes) -> None:
+        self._track_modes(chunk)
         self._screen.feed_bytes(chunk)
         self._refresh()
+
+    def _track_modes(self, chunk: bytes) -> None:
+        """Читает из вывода PTY режим application cursor keys (DECCKM).
+
+        Смотрим только этот режим: он единственный меняет то, что мы
+        отправляем. Хвост предыдущего чанка сохраняется, иначе разорванная
+        последовательность (`\x1b[?` + `1h`) потерялась бы — а вместе с ней
+        и признак того, что программе нужны SS3-стрелки.
+        """
+        window = self._mode_tail + chunk
+        self._mode_tail = window[-self.MODE_TAIL :]
+        matches = self.APP_CURSOR_PATTERN.findall(window)
+        if matches:
+            self._app_cursor = matches[-1] == b"h"
+
+    @property
+    def application_cursor_keys(self) -> bool:
+        """True, если программа в PTY включила application cursor keys."""
+        return self._app_cursor
 
     def _send_input(self, data: bytes) -> None:
         """Пишет байты пользовательского ввода в PTY."""
@@ -339,13 +372,19 @@ class TerminalSession(WorkspaceItem):
     def resize_to_area(self, width: float, height: float) -> None:
         """Подгоняет сетку под пиксельный размер рабочей области.
 
-        Нужен там, где событие `on_size_change` контейнера не приходит:
-        скрытая вкладка (`visible=False`) о своём размере не сообщает, а при
-        показе новый кадр может не прийти вовсе. Геометрию области знает
-        `ApplicationLayout`, подсчёт символов — `TerminalView.grid_size`, так
-        что источник правды о сетке остаётся один.
+        Это **запасной** путь для вкладки, которая ещё ни разу не получала
+        событие о своём размере (сборка без показа, скрытая вкладка до
+        первого кадра). Оценка по размеру окна всегда неточна: она не знает
+        про панель вкладок, границы и полосы прокрутки. Как только контейнер
+        сообщил настоящий размер, он и только он определяет сетку — иначе
+        два источника начинают перебивать друг друга: у одного и того же
+        окна сетка скачет (например, 74 и 78 строк), каждый скачок уходит в
+        `TIOCSWINSZ`, полноэкранная программа перерисовывается под новый
+        размер и отображение разъезжается.
         """
         if width <= 0 or height <= 0:
+            return
+        if self._view.measured:
             return
         self.resize(*self._view.grid_size(width, height))
 
@@ -412,6 +451,7 @@ class TerminalSession(WorkspaceItem):
             ctrl=event.ctrl,
             alt=event.alt,
             meta=event.meta,
+            application_cursor=self._app_cursor,
         )
         if data is None:
             # Клавиша не наша (например, F-клавиша без обработки) — но фокус

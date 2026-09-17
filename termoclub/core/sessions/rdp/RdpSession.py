@@ -23,7 +23,9 @@ class RdpSession(WorkspaceItem):
         if self._content is None:
             self._content = ft.Column(
                 [
-                    ft.Text(self.title, style=ft.TextThemeStyle.HEADLINE_SMALL),
+                    # `theme_style`, а не `style`: строка из `TextThemeStyle` в
+                    # `style` (который ждёт `TextStyle`) ломает отрисовку.
+                    ft.Text(self.title, theme_style=ft.TextThemeStyle.HEADLINE_SMALL),
                     ft.Text("RDP session is not implemented yet."),
                 ],
                 alignment=ft.MainAxisAlignment.CENTER,

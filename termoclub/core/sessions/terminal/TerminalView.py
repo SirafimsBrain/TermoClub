@@ -177,6 +177,17 @@ class TerminalView:
         return self._size
 
     @property
+    def measured(self) -> bool:
+        """True, если контейнер уже сообщил свой размер в пикселях.
+
+        Признак нужен сессии: пока настоящего размера нет, допустима
+        запасная оценка по размеру окна (`TerminalSession.resize_to_area`),
+        а после — нет. Иначе два источника размера перебивают друг друга, и
+        сетка (вместе с окном PTY) начинает скакать при одном и том же окне.
+        """
+        return self._pixels is not None
+
+    @property
     def control(self) -> ft.Control:
         """Строит (один раз) контейнер терминала с экраном и полем ввода."""
         if self._control is None:
