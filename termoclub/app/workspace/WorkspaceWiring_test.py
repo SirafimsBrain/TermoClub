@@ -13,9 +13,10 @@ from main import TermoClubApp
 
 
 class _StubPage:
-    def __init__(self) -> None:
+    def __init__(self, route: str = "/") -> None:
         self.fonts: dict | None = None
         self.added: list = []
+        self.route = route
         self.window = SimpleNamespace(width=1200, height=800)
 
     def add(self, *controls) -> None:  # type: ignore[no-untyped-def]
@@ -437,3 +438,161 @@ def test_startup_scan_honours_disabled_plugins(tmp_path) -> None:
 
     app._scan_plugins()
     assert app.settings.schema.find("demo-plugin") is None
+
+
+# --- Состояние главного окна и стартовый вид ---
+
+
+def test_panels_start_collapsed() -> None:
+    """При запуске обе выдвижные панели свёрнуты."""
+    app = TermoClubApp(_StubPage())  # type: ignore[arg-type]
+    app.start()
+    assert app.layout.panel_visibility() == (False, False)
+
+
+def test_no_tabs_are_open_at_startup(tmp_path) -> None:
+    """Стартовые вкладки не открываются: рабочая область пуста.
+
+    Штатный запуск идёт через `_bootstrap`, где сессия создаётся только если
+    так сказано в настройках (`startup_session`), а её умолчание — `none`.
+    """
+    app = TermoClubApp(_StubPage())  # type: ignore[arg-type]
+    app.start()
+    asyncio.run(app._bootstrap())
+
+    assert app.settings.get("global", "startup_session") == "none"
+    assert app.manager.sessions == []
+    assert _tabs(app) == []
+
+
+def test_explicit_startup_session_setting_opens_a_tab() -> None:
+    """Если пользователь выбрал сессию запуска, она открывается.
+
+    Терминал не поднимаем: важен выбор `_bootstrap`, а не работа PTY.
+    """
+    app = TermoClubApp(_StubPage())  # type: ignore[arg-type]
+    app.start()
+    opened: list[str] = []
+    app._open_terminal = lambda kind="terminal": opened.append(kind)  # type: ignore[method-assign]
+    app.settings.set("global", "startup_session", "terminal-gpu", save=False)
+
+    asyncio.run(app._bootstrap())
+    assert opened == ["terminal-gpu"]
+
+
+def test_panel_toggle_is_persisted_and_restored() -> None:
+    """Раскрытие панели сохраняется и возвращается при следующем запуске."""
+    first = TermoClubApp(_StubPage())  # type: ignore[arg-type]
+    first.start()
+    first._on_panel_toggle("right", True)
+
+    second = TermoClubApp(_StubPage())  # type: ignore[arg-type]
+    second.start()
+    assert second.layout.panel_visibility() == (False, True)
+
+
+def test_collapsing_a_panel_is_also_persisted() -> None:
+    """Свёрнутая пользователем панель не возвращается раскрытой."""
+    first = TermoClubApp(_StubPage())  # type: ignore[arg-type]
+    first.start()
+    first._on_panel_toggle("left", True)
+    first._on_panel_toggle("left", False)
+
+    second = TermoClubApp(_StubPage())  # type: ignore[arg-type]
+    second.start()
+    assert second.layout.panel_visibility() == (False, False)
+
+
+def test_window_size_is_restored_from_the_profile() -> None:
+    """Размер окна, записанный при выходе, применяется при следующем старте."""
+    first_page = _StubPage()
+    first = TermoClubApp(first_page)  # type: ignore[arg-type]
+    first.start()
+    first_page.window.width, first_page.window.height = 1024, 768
+    first._save_window_state()
+
+    page = _StubPage()
+    second = TermoClubApp(page)  # type: ignore[arg-type]
+    second.start()
+    assert (page.window.width, page.window.height) == (1024.0, 768.0)
+
+
+def test_resize_updates_memory_and_exit_writes_the_file(tmp_path) -> None:
+    """Ресайз не пишет файл на каждый кадр, а выход — фиксирует размер.
+
+    Перетаскивание рамки сыпет событиями; запись происходит один раз, при
+    завершении работы.
+    """
+    import json
+
+    state_file = tmp_path / "window" / "state.json"
+    page = _StubPage()
+    app = TermoClubApp(page)  # type: ignore[arg-type]
+    app.start()
+
+    page.window.width, page.window.height = 1300, 850
+    app._on_page_resize(SimpleNamespace(width=1300, height=850))
+    assert (app.window_state.state.width, app.window_state.state.height) == (1300, 850)
+    assert not state_file.exists(), "ресайз не должен писать файл"
+
+    app._save_window_state()
+    saved = json.loads(state_file.read_text())
+    assert (saved["width"], saved["height"]) == (1300, 850)
+
+
+def test_exit_save_falls_back_to_the_last_resize_size(tmp_path) -> None:
+    """Если `page.window` не отдаёт размер, берётся последний ресайз.
+
+    В web-режиме запись в `page.window` может не менять реальное окно, и
+    прочитанный размер окажется нулевым — тогда сохранять нечего, кроме
+    уже увиденного в `on_resize`.
+    """
+    import json
+
+    page = _StubPage()
+    app = TermoClubApp(page)  # type: ignore[arg-type]
+    app.start()
+
+    app._on_page_resize(SimpleNamespace(width=1300, height=850))
+    page.window.width, page.window.height = None, None
+    app._save_window_state()
+
+    saved = json.loads((tmp_path / "window" / "state.json").read_text())
+    assert (saved["width"], saved["height"]) == (1300, 850)
+
+
+def test_repeated_resize_with_same_size_keeps_state_untouched() -> None:
+    """Событие с тем же размером не считается изменением."""
+    app = TermoClubApp(_StubPage())  # type: ignore[arg-type]
+    app.start()
+
+    app._remember_window_size(1024, 768)
+    app._remember_window_size(1024, 768)
+    assert (app.window_state.state.width, app.window_state.state.height) == (1024, 768)
+
+
+def test_unknown_initial_route_falls_back_to_home() -> None:
+    """Незнакомая ссылка открывает главную, а не пустую рабочую область."""
+    app = TermoClubApp(_StubPage("/no/such/page"))  # type: ignore[arg-type]
+    app.start()
+    assert app._route == "/"
+
+
+def test_deep_link_opens_the_settings_tab() -> None:
+    """Прямой переход на `/settings` открывает вкладку настроек.
+
+    Раньше начальный маршрут жёстко считался главной, и ссылка на раздел
+    приводила на главный экран.
+    """
+    app = TermoClubApp(_StubPage("/settings"))  # type: ignore[arg-type]
+    app.start()
+
+    assert app._route == "/settings"
+    assert [item.kind for item in app.manager.sessions] == ["settings"]
+
+
+def test_deep_link_to_logs_opens_the_logs_section() -> None:
+    """Прямой переход на `/logs` открывает раздел логов."""
+    app = TermoClubApp(_StubPage("/logs"))  # type: ignore[arg-type]
+    app.start()
+    assert app._route == "/logs"

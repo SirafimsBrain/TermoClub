@@ -7,6 +7,7 @@ concrete terminals, works only with Flet controls.
 """
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 
 import flet as ft
@@ -14,12 +15,17 @@ import flet as ft
 
 @dataclass
 class PanelConfig:
-    """Sizes of the five panels."""
+    """Sizes of the five panels and their initial visibility."""
 
     left_width: int = 280
     right_width: int = 280
     top_height: int = 40
     bottom_height: int = 28
+    #: Обе выдвижные панели при запуске свёрнуты: рабочая область шире,
+    #: а пользователь раскрывает только ту, что нужна. Сохранённое состояние
+    #: окна (см. `app/window`) может вернуть их открытыми.
+    left_collapsed: bool = True
+    right_collapsed: bool = True
 
 
 class CollapsiblePanel:
@@ -37,12 +43,14 @@ class CollapsiblePanel:
         page: ft.Page,
         position: str,
         default_width: int = 280,
+        collapsed: bool = False,
+        on_toggle: Callable[[str, bool], None] | None = None,
     ) -> None:
         self.page = page
         self.position = position
         self.default_width = default_width
-        self.is_visible = True
-        self.current_width = default_width
+        self.is_visible = not collapsed
+        self._on_toggle = on_toggle
 
         is_left = position == "left"
 
@@ -70,9 +78,15 @@ class CollapsiblePanel:
             on_hover=self._on_hover,
             bgcolor=ft.Colors.TRANSPARENT,
         )
+        self._sync_visibility()
 
-    def _on_toggle_click(self, e: ft.ControlEvent) -> None:
-        self.is_visible = not self.is_visible
+    def _sync_visibility(self) -> None:
+        """Приводит ширину панели и иконку тумблера к `is_visible`.
+
+        Вызывается и из конструктора: панель может создаваться свёрнутой,
+        и тогда первый же кадр должен рисоваться в свёрнутом виде, без
+        анимации «раскрыл и тут же закрыл».
+        """
         is_left = self.position == "left"
         if self.is_visible:
             self.panel.width = float(self.default_width)
@@ -84,8 +98,22 @@ class CollapsiblePanel:
             self.toggle_button.content.icon = (
                 ft.Icons.CHEVRON_RIGHT if is_left else ft.Icons.CHEVRON_LEFT
             )
+
+    def set_visible(self, visible: bool, *, notify: bool = False) -> None:
+        """Раскрывает или сворачивает панель.
+
+        `notify` выключен для программного применения сохранённого состояния:
+        там вызывающий сам решает, писать ли его на диск.
+        """
+        self.is_visible = visible
+        self._sync_visibility()
         self.toggle_button.bgcolor = ft.Colors.TRANSPARENT
         self._update(self.panel, self.toggle_button)
+        if notify and self._on_toggle is not None:
+            self._on_toggle(self.position, self.is_visible)
+
+    def _on_toggle_click(self, e: ft.ControlEvent) -> None:
+        self.set_visible(not self.is_visible, notify=True)
 
     def _on_hover(self, e: ft.ControlEvent) -> None:
         if e.data == "true":
@@ -119,6 +147,7 @@ class ApplicationLayout:
         self,
         page: ft.Page,
         config: PanelConfig | None = None,
+        on_panel_toggle: Callable[[str, bool], None] | None = None,
     ) -> None:
         self.page = page
         self.config = config or PanelConfig()
@@ -141,11 +170,15 @@ class ApplicationLayout:
             page,
             position="left",
             default_width=self.config.left_width,
+            collapsed=self.config.left_collapsed,
+            on_toggle=on_panel_toggle,
         )
         self.right_panel = CollapsiblePanel(
             page,
             position="right",
             default_width=self.config.right_width,
+            collapsed=self.config.right_collapsed,
+            on_toggle=on_panel_toggle,
         )
 
         self.workspace_panel = ft.Container(
@@ -214,6 +247,19 @@ class ApplicationLayout:
 
     def set_right_content(self, content: ft.Control) -> None:
         self.right_panel.set_content(content)
+
+    def set_panel_visible(self, position: str, visible: bool) -> None:
+        """Программно раскрывает/сворачивает панель без уведомления наружу.
+
+        Нужно при восстановлении сохранённого состояния окна: снимок уже
+        прочитан с диска, и снова его писать (и слать уведомление) не надо.
+        """
+        panel = self.left_panel if position == "left" else self.right_panel
+        panel.set_visible(visible, notify=False)
+
+    def panel_visibility(self) -> tuple[bool, bool]:
+        """Текущая видимость боковых панелей (лев, прав)."""
+        return self.left_panel.is_visible, self.right_panel.is_visible
 
     def set_workspace_content(self, content: ft.Control) -> None:
         self.workspace_panel.content = content

@@ -32,7 +32,7 @@
       "type": "choice",
       "label": "Startup session",
       "description": "Session opened automatically on launch.",
-      "default": "terminal",
+      "default": "none",
       "choices": [
         { "value": "none", "label": "None" },
         { "value": "terminal", "label": "Terminal (pyte)" },

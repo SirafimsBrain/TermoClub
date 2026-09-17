@@ -13,7 +13,7 @@ from pathlib import Path
 
 import flet as ft
 
-from app.layout import ApplicationLayout
+from app.layout import ApplicationLayout, PanelConfig
 from app.routes import HOME, LOGS, SETTINGS
 from app.ui.FontAwesome import FontAwesome
 from app.ui.MainMenu import MainMenu
@@ -28,6 +28,7 @@ from core.config import get_active_terminal_name
 from core.settings.SettingsApplier import SettingsApplier
 from core.settings.SettingsStore import SettingsStore
 from core.terminal.factory import create_terminal_controller
+from core.window.WindowStateStore import WindowStateStore
 from logging_setup import setup_logging
 
 logger = logging.getLogger(__name__)
@@ -57,7 +58,14 @@ class TermoClubApp:
     def __init__(self, page: ft.Page) -> None:
         self.page = page
         FontAwesome.register(page)
-        self.layout = ApplicationLayout(page)
+        # Состояние окна читается до сборки каркаса: панели должны получить
+        # сохранённую видимость первым же кадром, а не переключиться после.
+        self.window_state = WindowStateStore()
+        self.layout = ApplicationLayout(
+            page,
+            self._panel_config(),
+            on_panel_toggle=self._on_panel_toggle,
+        )
         self.statuses = SystemStatuses()
         self.manager = WorkspaceManager()
         # Настройки: одно хранилище на приложение, поверх — применение к
@@ -106,6 +114,7 @@ class TermoClubApp:
     def exit_app(self) -> None:
         """Закрывает окно приложения (пункт меню Exit)."""
         logger.info("Exit requested from main menu")
+        self._save_window_state()
         self.page.window.close()
 
     def _open_terminal(self, kind: str = "terminal") -> None:
@@ -216,12 +225,91 @@ class TermoClubApp:
         height = float(getattr(win, "height", 0) or 0)
         return (width, height) if width > 0 and height > 0 else (0.0, 0.0)
 
-    def _on_page_resize(self, event: ft.PageResizeEvent) -> None:
-        """Размер окна изменился: подгоняем сетку активного терминала."""
-        self._fit_active_terminal(
-            float(getattr(event, "width", 0) or 0),
-            float(getattr(event, "height", 0) or 0),
+    # --- Состояние главного окна ---
+
+    def _panel_config(self) -> PanelConfig:
+        """Конфигурация панелей с учётом сохранённого состояния окна.
+
+        Умолчания (`PanelConfig`) держат панели свёрнутыми; сохранённый снимок
+        может вернуть их раскрытыми. Панели получают видимость здесь, на этапе
+        сборки каркаса, — тогда первый кадр уже правильный. Размер окна
+        применяется отдельно, в `_restore_window_state`.
+        """
+        config = PanelConfig()
+        state = self.window_state.state
+        config.left_collapsed = not state.left_panel_open
+        config.right_collapsed = not state.right_panel_open
+        return config
+
+    def _restore_window_state(self) -> None:
+        """Применяет сохранённый размер окна к странице.
+
+        Панели уже получили видимость при сборке каркаса (`_panel_config`).
+        В web-режиме размер окна задаёт браузер, и `page.window` на запись
+        может не влиять — это принимается как есть, состояние всё равно
+        сохраняется.
+        """
+        state = self.window_state.state
+        win = getattr(self.page, "window", None)
+        if win is None:
+            return
+        try:
+            win.width = float(state.width)
+            win.height = float(state.height)
+            win.maximized = state.maximized
+        except (AttributeError, ValueError, TypeError) as exc:
+            logger.warning("Cannot apply saved window size: %s", exc)
+            return
+        logger.info(
+            "Window state restored: %sx%s (maximized=%s)",
+            state.width,
+            state.height,
+            state.maximized,
         )
+
+    def _on_panel_toggle(self, position: str, visible: bool) -> None:
+        """Пользователь раскрыл/свернул боковую панель — сохраняем вид."""
+        field = "left_panel_open" if position == "left" else "right_panel_open"
+        self.window_state.update(save=True, **{field: visible})
+        logger.info("Window state: %s panel -> %s", position, visible)
+
+    def _remember_window_size(self, width: float, height: float) -> None:
+        """Запоминает размер окна в памяти, без записи файла.
+
+        `on_resize` приходит потоком, пока пользователь тянет рамку, и каждый
+        кадр даёт новую ширину: писать файл на каждое событие — лишний ввод-вывод.
+        На диск размер попадает при выходе (`_save_window_state`), поэтому
+        совпадение с уже сохранённым размером отсекаем, чтобы не помечать
+        состояние изменённым зря.
+        """
+        if width <= 0 or height <= 0:
+            return
+        state = self.window_state.state
+        new_width, new_height = int(width), int(height)
+        if (new_width, new_height) == (state.width, state.height):
+            return
+        self.window_state.update(save=False, width=new_width, height=new_height)
+
+    def _save_window_state(self) -> None:
+        """Записывает состояние окна на диск (выход, отключение клиента).
+
+        Здесь же подхватывается текущий размер окна: между последним
+        `on_resize` и выходом он мог измениться.
+        """
+        size = self._page_size()
+        if size != (0.0, 0.0):
+            self._remember_window_size(*size)
+        self.window_state.save()
+
+    def _on_page_resize(self, event: ft.PageResizeEvent) -> None:
+        """Размер окна изменился: подгоняем сетку и запоминаем размер."""
+        width = float(getattr(event, "width", 0) or 0)
+        height = float(getattr(event, "height", 0) or 0)
+        if width <= 0 or height <= 0:
+            # Событие без размеров: берём текущий размер окна как запасной путь.
+            width, height = self._page_size()
+        self._fit_active_terminal(width, height)
+        self._remember_window_size(width, height)
 
     def _setup_panels(self) -> None:
         page = self.page
@@ -343,14 +431,36 @@ class TermoClubApp:
         if active is not None and hasattr(active, "handle_key"):
             active.handle_key(e)
 
+    def _initial_route(self) -> str:
+        """Маршрут, с которого стартует приложение.
+
+        `page.route` приходит от клиента уже при создании сессии: в web это
+        путь из адресной строки, в desktop — аргумент запуска. Раньше здесь
+        жёстко подставлялся `HOME`, из-за чего прямой переход на `/settings`
+        или `/logs` открывал главную. Незнакомый маршрут (старая ссылка,
+        опечатка) сводим к главной, чтобы рабочая область не осталась пустой.
+        """
+        route = getattr(self.page, "route", None)
+        if not isinstance(route, str) or not route:
+            return HOME
+        if route in (HOME, LOGS, SETTINGS):
+            return route
+        logger.info("Unknown initial route %r, falling back to %s", route, HOME)
+        return HOME
+
     def start(self) -> None:
+        self._restore_window_state()
         self.page.add(self.layout.build())
         self._setup_panels()
         self.page.on_route_change = lambda e: self.route_to_workspace(e.route)
         self.page.on_keyboard_event = self._on_page_key
         self.page.on_resize = self._on_page_resize
+        # Последнее сохранение вида: в desktop сессия закрывается вместе с
+        # окном, и `on_resize` перед этим может не прийти.
+        self.page.on_disconnect = lambda e=None: self._save_window_state()
+        self.page.on_close = lambda e=None: self._save_window_state()
         # Начальный маршрут не порождает on_route_change — рисуем явно.
-        self.route_to_workspace(HOME)
+        self.route_to_workspace(self._initial_route())
 
 
 async def main(page: ft.Page) -> None:
