@@ -51,16 +51,32 @@ still starts with defaults and `save()` returns `False` instead of raising.
 
 ## When the state is written
 
-The store writes on every change rather than waiting for shutdown, because
-there is no reliable "save now" moment for a window. Writers:
+**Once, when the window closes.** Everything the user does in the meantime —
+moving an edge, opening a panel — only updates the in-memory snapshot. The
+disk is touched on the single save, deliberately: writing the view state on
+every interaction would put needless wear on an SSD, and nothing is lost if
+the process dies first. A crash means the next launch starts clean, which is
+an accepted outcome for view state.
 
-- `_on_page_resize` — via `_remember_window_size`, which skips the write when
-  the size is unchanged, so dragging an edge does not rewrite the file on every
-  frame.
-- the panel toggle callback — panels are a deliberate user action, so each
-  toggle is saved immediately.
-- `page.on_disconnect` and `page.on_close`, plus the Exit menu item — a final
-  save in case nothing was written last.
+The writers, all funnelling into `_save_window_state`:
+
+- `page.on_close` and `page.on_disconnect` — the normal close path.
+- the Exit menu item — the same save, for the case where focus is in the menu.
+- `on_resize` **does not** save; it calls `_remember_window_size`, which only
+  updates memory (and skips the update when the size is unchanged).
+- `on_panel_toggle` does not save either: `update(save=False)` by default.
+
+`WindowStateStore.update` therefore defaults to `save=False`, so the safe path
+is the one taken by accident. `save=True` exists for the rare caller that needs
+an immediate write, and `save()` is public for the explicit case.
+
+Programmatic restoration uses `ApplicationLayout.set_panel_visible`, which does
+not fire the toggle callback. Otherwise restoring a snapshot would try to write
+back what was just read.
+
+If the process is killed before the close handler runs, the file keeps its
+previous contents and the next launch starts from that — or from defaults if
+there was never a save.
 
 ## Startup flow
 
@@ -71,10 +87,6 @@ the default. `start()` then applies the saved window size to `page.window`.
 
 In web mode the browser dictates the window size and may ignore the value
 written to `page.window`; the app accepts that and still records the state.
-
-Programmatic restoration uses `ApplicationLayout.set_panel_visible`, which does
-not fire the toggle callback. Otherwise restoring a snapshot would immediately
-write back what was just read.
 
 ## Startup tabs
 

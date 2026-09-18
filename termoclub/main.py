@@ -268,9 +268,14 @@ class TermoClubApp:
         )
 
     def _on_panel_toggle(self, position: str, visible: bool) -> None:
-        """Пользователь раскрыл/свернул боковую панель — сохраняем вид."""
+        """Запоминает видимость панели в памяти, не трогая диск.
+
+        На диск состояние уходит только при закрытии окна
+        (`_save_window_state`): постоянные записи изнашивают SSD, а вид окна
+        не тот случай, ради которого стоит писать на каждый клик.
+        """
         field = "left_panel_open" if position == "left" else "right_panel_open"
-        self.window_state.update(save=True, **{field: visible})
+        self.window_state.update(save=False, **{field: visible})
         logger.info("Window state: %s panel -> %s", position, visible)
 
     def _remember_window_size(self, width: float, height: float) -> None:

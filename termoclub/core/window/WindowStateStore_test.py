@@ -25,10 +25,24 @@ def test_first_run_returns_defaults_and_writes_nothing(fm) -> None:
     assert not fm.exists(STATE_FILE)
 
 
-def test_update_writes_the_profile_file(fm) -> None:
-    """Изменение сразу доходит до файла профиля."""
+def test_update_alone_does_not_touch_the_disk(fm) -> None:
+    """По умолчанию `update` пишет только в память.
+
+    Состояние окна сохраняется один раз, при закрытии приложения: частые
+    записи изнашивают SSD. Здесь это и проверяется — файла нет.
+    """
     store = WindowStateStore(fm)
     store.update(width=1600, height=1000, left_panel_open=True)
+
+    assert store.state.width == 1600
+    assert not fm.exists(STATE_FILE)
+
+
+def test_save_writes_the_profile_file(fm) -> None:
+    """Явное сохранение доводит состояние до файла профиля."""
+    store = WindowStateStore(fm)
+    store.update(width=1600, height=1000, left_panel_open=True)
+    assert store.save() is True
 
     payload = json.loads(fm.read_text(STATE_FILE))
     assert payload["width"] == 1600
@@ -38,7 +52,9 @@ def test_update_writes_the_profile_file(fm) -> None:
 
 def test_state_survives_a_restart(fm) -> None:
     """Сохранённое состояние читается новым посредником (перезапуск)."""
-    WindowStateStore(fm).update(width=1024, height=768, right_panel_open=True)
+    store = WindowStateStore(fm)
+    store.update(width=1024, height=768, right_panel_open=True)
+    store.save()
 
     restored = WindowStateStore(fm).state
     assert (restored.width, restored.height) == (1024, 768)
@@ -52,6 +68,7 @@ def test_panels_toggle_is_persisted_independently(fm) -> None:
     store.update(left_panel_open=True)
     store.update(right_panel_open=True)
     store.update(left_panel_open=False)
+    store.save()
 
     restored = WindowStateStore(fm).state
     assert (restored.left_panel_open, restored.right_panel_open) == (False, True)
@@ -71,13 +88,10 @@ def test_unknown_field_is_rejected(fm) -> None:
         store.update(nosuchfield=1)
 
 
-def test_update_without_save_keeps_the_file(fm) -> None:
-    """`save=False` меняет только состояние в памяти."""
+def test_explicit_save_on_update_writes_immediately(fm) -> None:
+    """`save=True` — путь для случаев, когда запись нужна сразу."""
     store = WindowStateStore(fm)
-    store.update(width=1600)
-    store.update(width=900, save=False)
-
-    assert store.state.width == 900
+    store.update(width=1600, save=True)
     assert json.loads(fm.read_text(STATE_FILE))["width"] == 1600
 
 
@@ -85,6 +99,7 @@ def test_reset_returns_defaults_and_saves(fm) -> None:
     """Сброс вида возвращает умолчания и фиксирует их в файле."""
     store = WindowStateStore(fm)
     store.update(width=1600, left_panel_open=True)
+    store.save()
 
     store.reset()
     assert store.state == WindowState()

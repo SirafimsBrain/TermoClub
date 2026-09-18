@@ -481,10 +481,11 @@ def test_explicit_startup_session_setting_opens_a_tab() -> None:
 
 
 def test_panel_toggle_is_persisted_and_restored() -> None:
-    """Раскрытие панели сохраняется и возвращается при следующем запуске."""
+    """Раскрытие панели сохраняется при закрытии и возвращается при старте."""
     first = TermoClubApp(_StubPage())  # type: ignore[arg-type]
     first.start()
     first._on_panel_toggle("right", True)
+    first._save_window_state()
 
     second = TermoClubApp(_StubPage())  # type: ignore[arg-type]
     second.start()
@@ -497,10 +498,34 @@ def test_collapsing_a_panel_is_also_persisted() -> None:
     first.start()
     first._on_panel_toggle("left", True)
     first._on_panel_toggle("left", False)
+    first._save_window_state()
 
     second = TermoClubApp(_StubPage())  # type: ignore[arg-type]
     second.start()
     assert second.layout.panel_visibility() == (False, False)
+
+
+def test_nothing_is_written_before_the_window_closes(tmp_path) -> None:
+    """До закрытия окна файл состояния не появляется.
+
+    Требование по ресурсу SSD: состояние пишется один раз, при закрытии.
+    Ни клик по шеврону, ни ресайз не должны трогать диск.
+    """
+    state_file = tmp_path / "window" / "state.json"
+    page = _StubPage()
+    app = TermoClubApp(page)  # type: ignore[arg-type]
+    app.start()
+
+    app._on_panel_toggle("left", True)
+    app._on_panel_toggle("right", True)
+    page.window.width, page.window.height = 1500, 950
+    app._on_page_resize(SimpleNamespace(width=1500, height=950))
+
+    assert not state_file.exists(), "до закрытия окна писать на диск нельзя"
+
+    # Закрытие окна — вот теперь состояние фиксируется.
+    app._save_window_state()
+    assert state_file.exists()
 
 
 def test_window_size_is_restored_from_the_profile() -> None:
