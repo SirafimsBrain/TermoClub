@@ -169,3 +169,47 @@ def test_failing_handler_does_not_break_the_rest(tmp_path: Path) -> None:
     applier = _applier(tmp_path, page=Boom())
     assert applier.apply_spec("global", "theme_mode", "theme_mode") is False
     assert applier.apply_key("global", "log_level") is True
+
+
+# --- Пределы ширины боковых панелей ---
+
+
+def test_panel_limits_reach_the_layout(tmp_path: Path) -> None:
+    """Пределы ширины панелей уходят в UI-слой одним сообщением.
+
+    Оба предела передаются вместе: панели должны быть в согласованном
+    состоянии после правки любой из двух настроек.
+    """
+    seen: list[tuple[int, int]] = []
+    store = _store(tmp_path)
+    applier = SettingsApplier(store)
+    applier.register_panel_limits(lambda left, right: seen.append((left, right)))
+
+    store.set("appearance", "left_panel_max_width", 480)
+    applier.apply_key("appearance", "left_panel_max_width")
+    assert seen[-1] == (480, 600)
+
+    store.set("appearance", "right_panel_max_width", 700)
+    applier.apply_key("appearance", "right_panel_max_width")
+    assert seen[-1] == (480, 700)
+
+
+def test_panel_limits_survive_a_missing_schema_key(tmp_path: Path) -> None:
+    """Если настройки в схеме нет, предел берётся по умолчанию.
+
+    Схему плагина или старый профиль менять нельзя, а панель всё равно
+    должна получить работоспособный предел.
+    """
+    seen: list[tuple[int, int]] = []
+    store = _store(tmp_path)
+    applier = SettingsApplier(store)
+    applier.register_panel_limits(lambda left, right: seen.append((left, right)))
+
+    applier.apply_spec("appearance", "left_panel_max_width", "panel_widths")
+    assert seen[-1] == (600, 600)
+
+
+def test_panel_widths_without_a_target_are_ignored(tmp_path: Path) -> None:
+    """Пока UI не зарегистрировал приёмник, обработчик молча выходит."""
+    applier = _applier(tmp_path)
+    assert applier.apply_key("appearance", "left_panel_max_width") is True

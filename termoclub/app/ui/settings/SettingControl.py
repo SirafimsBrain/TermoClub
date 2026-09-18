@@ -26,6 +26,11 @@ from core.settings.SettingsValidationError import SettingsValidationError
 #: Цвет подписи-описания и текста ошибки.
 MUTED = ft.Colors.ON_SURFACE_VARIANT
 
+#: Нижняя граница ширины колонки с подписью и описанием.
+#: Меньше — и `ft.Text` начинает переносить по символу, растягивая строку
+#: в высоту; на этой ширине текст остаётся читаемым.
+TEXT_MIN_WIDTH = 220
+
 
 class SettingControl:
     """Строка настроек: подпись, редактор и служебные действия."""
@@ -55,7 +60,15 @@ class SettingControl:
 
     @property
     def control(self) -> ft.Control:
-        """Строка настроек (строится один раз)."""
+        """Строка настроек (строится один раз).
+
+        Текстовая колонка получает `expand` и **нижнюю границу ширины**:
+        редактор занимает фиксированные `EDITOR_WIDTH`, и в узком окне на
+        подпись с описанием остаётся всё меньше места. Без границы `ft.Text`
+        переносил бы по одному символу в строке, и описание вырастало в
+        вертикальную «колбасу» — было видно, как при уменьшении окна текст
+        сначала сваливается в кучу, а потом разъезжается по высоте.
+        """
         if self._row is None:
             self._editor = self.build_editor()
             self._error = ft.Text("", size=11, color=ft.Colors.ERROR, visible=False)
@@ -63,11 +76,17 @@ class SettingControl:
                 padding=ft.Padding.symmetric(vertical=6, horizontal=4),
                 content=ft.Row(
                     [
-                        ft.Column(
-                            [self._label(), self._description()],
-                            spacing=2,
+                        ft.Container(
+                            content=ft.Column(
+                                [self._label(), self._description()],
+                                spacing=2,
+                                alignment=ft.MainAxisAlignment.CENTER,
+                            ),
                             expand=True,
-                            alignment=ft.MainAxisAlignment.CENTER,
+                            # Панель настроек прокручивается по горизонтали:
+                            # на узкой панели текст не сжимается в столбик,
+                            # а остаётся читаемым и до него доскролливаешь.
+                            width=TEXT_MIN_WIDTH,
                         ),
                         ft.Container(content=self._editor, width=self.EDITOR_WIDTH),
                         self._reset(),
@@ -178,8 +197,22 @@ class SettingControl:
         return ft.Row(parts, spacing=6, vertical_alignment=ft.CrossAxisAlignment.CENTER)
 
     def _description(self) -> ft.Control:
-        """Описание настройки под подписью."""
-        return ft.Text(self.spec.description or "", size=11, color=MUTED, visible=bool(self.spec.description))
+        """Описание настройки под подписью.
+
+        Ограничено двумя строками с многоточием: раньше длинное описание в
+        узкой строке переносилось без предела и раздувало строку настроек по
+        высоте. Полный текст читается в подсказке.
+        """
+        text = self.spec.description or ""
+        return ft.Text(
+            text,
+            size=11,
+            color=MUTED,
+            visible=bool(text),
+            max_lines=2,
+            overflow=ft.TextOverflow.ELLIPSIS,
+            tooltip=text or None,
+        )
 
     def _reset(self) -> ft.Control:
         """Кнопка сброса к умолчанию (видна только при изменённом значении)."""

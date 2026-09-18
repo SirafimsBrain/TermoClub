@@ -23,6 +23,10 @@ from core.settings.SettingsStore import SettingsStore
 
 logger = logging.getLogger(__name__)
 
+#: Верхний предел ширины панели, когда настройки недоступны. Совпадает с
+#: умолчанием `appearance.*_panel_max_width`; нужен лишь как страховка.
+DEFAULT_PANEL_MAX_WIDTH = 600
+
 
 class SettingsApplier:
     """Применяет изменения настроек к живым компонентам приложения."""
@@ -38,6 +42,8 @@ class SettingsApplier:
         self._sessions = sessions
         self._page = page
         self._terminal_factory = terminal_factory
+        #: Кому отдавать пределы ширины панелей (ставит UI через `register_panel_limits`).
+        self._panel_limits: Callable[[int, int], None] | None = None
         #: Имя applier'а -> метод класса (расширяемо без правки схемы).
         #: Обработчик получает slug категории и новое значение: категория
         #: нужна там, где менять надо только «свои» вкладки терминала.
@@ -48,6 +54,7 @@ class SettingsApplier:
             "active_terminal": self._apply_active_terminal,
             "terminal_appearance": self._apply_terminal_appearance,
             "terminal_refresh": self._apply_terminal_refresh,
+            "panel_widths": self._apply_panel_widths,
         }
 
     # --- Регистрация «живых» целей ---
@@ -63,6 +70,16 @@ class SettingsApplier:
     def register_terminal_factory(self, factory: Callable[[str], Any]) -> None:
         """Запоминает фабрику контроллеров внешнего терминала."""
         self._terminal_factory = factory
+
+    def register_panel_limits(
+        self, applier_fn: Callable[[int, int], None] | None
+    ) -> None:
+        """Запоминает, кому отдавать новые пределы ширины боковых панелей.
+
+        Так же, как с темой и терминалами, слой настроек не знает про Flet:
+        UI отдаёт сюда функцию, а `panel_widths` только передаёт ей значения.
+        """
+        self._panel_limits = applier_fn
 
     # --- Применение ---
 
@@ -171,6 +188,25 @@ class SettingsApplier:
             if apply is not None:
                 apply(int(value))
 
+    def _apply_panel_widths(self, slug: str, value: Any) -> None:
+        """Пределы ширины боковых панелей (левый и правый — раздельно).
+
+        Обработчик вызывается на каждый изменённый ключ, а пределов два,
+        поэтому оба читаются из хранилища и передаются вместе: так правка
+        любой из двух настроек сразу приводит панели в согласованное
+        состояние.
+        """
+        if self._panel_limits is None:
+            return
+        left = _int_setting(self._store, slug, "left_panel_max_width")
+        right = _int_setting(self._store, slug, "right_panel_max_width")
+        if left is None and right is None:
+            return
+        self._panel_limits(
+            left if left is not None else DEFAULT_PANEL_MAX_WIDTH,
+            right if right is not None else DEFAULT_PANEL_MAX_WIDTH,
+        )
+
     def _live_sessions(self, category: str = "") -> list[Any]:
         """Живые сессии рабочей области (пусто, если источник не задан).
 
@@ -192,6 +228,17 @@ class SettingsApplier:
             for session in sessions
             if getattr(session, "appearance_category", "") == category
         ]
+
+
+def _int_setting(store: SettingsStore, slug: str, key: str) -> int | None:
+    """Целое значение настройки; `None`, если ключа нет или значение не число."""
+    try:
+        value = store.get(slug, key)
+    except Exception:  # noqa: BLE001 — отсутствующий ключ не должен ломать применение
+        return None
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    return int(value)
 
 
 def _level_by_name(name: str) -> int | None:

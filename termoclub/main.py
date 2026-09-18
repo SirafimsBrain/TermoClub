@@ -13,7 +13,7 @@ from pathlib import Path
 
 import flet as ft
 
-from app.layout import ApplicationLayout, PanelConfig
+from app.layout import MAX_PANEL_WIDTH, ApplicationLayout, PanelConfig
 from app.routes import HOME, LOGS, SETTINGS
 from app.ui.FontAwesome import FontAwesome
 from app.ui.MainMenu import MainMenu
@@ -61,22 +61,26 @@ class TermoClubApp:
         # Состояние окна читается до сборки каркаса: панели должны получить
         # сохранённую видимость первым же кадром, а не переключиться после.
         self.window_state = WindowStateStore()
+        # Настройки читаются до сборки каркаса: пределы ширины панелей приходят
+        # из схемы, и панели должны получить их первым же кадром.
+        # Хранилище одно на приложение, поверх — применение к живым вкладкам
+        # и странице (тема, шрифт терминала, частота отрисовки).
+        self.settings = SettingsStore()
         self.layout = ApplicationLayout(
             page,
             self._panel_config(),
             on_panel_toggle=self._on_panel_toggle,
+            on_panel_resize=self._on_panel_resize,
         )
         self.statuses = SystemStatuses()
         self.manager = WorkspaceManager()
-        # Настройки: одно хранилище на приложение, поверх — применение к
-        # живым вкладкам и странице (тема, шрифт терминала, частота отрисовки).
-        self.settings = SettingsStore()
         self.applier = SettingsApplier(
             self.settings,
             sessions=lambda: self.manager.sessions,
             page=page,
             terminal_factory=create_terminal_controller,
         )
+        self.applier.register_panel_limits(self._apply_panel_limits)
         self.settings.subscribe_changes(self.applier.apply_key)
         self.tab_bar = WorkspaceTabBar(
             on_select=self.manager.activate,
@@ -239,7 +243,41 @@ class TermoClubApp:
         state = self.window_state.state
         config.left_collapsed = not state.left_panel_open
         config.right_collapsed = not state.right_panel_open
+        # Пределы ширины берутся из настроек до сборки каркаса: панель должна
+        # получить их первым же кадром, а не подтянуться после.
+        config.max_left_width = self._panel_limit("left_panel_max_width")
+        config.max_right_width = self._panel_limit("right_panel_max_width")
+        # Ширину тянули мышью — открываем ровно на ней.
+        if state.left_panel_width:
+            config.left_width = state.left_panel_width
+        if state.right_panel_width:
+            config.right_width = state.right_panel_width
         return config
+
+    def _panel_limit(self, key: str) -> int:
+        """Верхний предел ширины панели из настроек, с запасным значением."""
+        try:
+            value = self.settings.get("appearance", key)
+        except Exception:  # noqa: BLE001 — схемы может не быть; предел не критичен
+            return MAX_PANEL_WIDTH
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            return MAX_PANEL_WIDTH
+        return int(value)
+
+    def _apply_panel_limits(self, left: int, right: int) -> None:
+        """Применяет пределы ширины панелей из настроек на лету."""
+        self.layout.set_max_panel_width("left", left)
+        self.layout.set_max_panel_width("right", right)
+
+    def _on_panel_resize(self, position: str, width: int) -> None:
+        """Ширину панели потянули мышью — запоминаем её в памяти.
+
+        На диск, как и остальное состояние окна, попадает только при
+        закрытии (`_save_window_state`).
+        """
+        field = "left_panel_width" if position == "left" else "right_panel_width"
+        self.window_state.update(save=False, **{field: int(width)})
+        logger.info("Window state: %s panel width -> %s", position, width)
 
     def _restore_window_state(self) -> None:
         """Применяет сохранённый размер окна к странице.

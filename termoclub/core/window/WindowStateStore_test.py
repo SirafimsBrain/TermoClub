@@ -130,3 +130,47 @@ def test_empty_payload_uses_defaults(fm) -> None:
     state = WindowStateStore(fm).state
     assert (state.width, state.height) == (DEFAULT_WIDTH, DEFAULT_HEIGHT)
     assert (state.left_panel_open, state.right_panel_open) == (False, False)
+
+
+# --- Ширина панелей ---
+
+
+def test_panel_widths_survive_a_restart(fm) -> None:
+    """Ширина панелей, выставленная мышью, переживает перезапуск."""
+    store = WindowStateStore(fm)
+    store.update(left_panel_width=340, right_panel_width=420)
+    store.save()
+
+    restored = WindowStateStore(fm).state
+    assert (restored.left_panel_width, restored.right_panel_width) == (340, 420)
+
+
+def test_panel_widths_are_not_written_before_close(fm) -> None:
+    """Тяга панели пишет только в память: файла до закрытия нет."""
+    store = WindowStateStore(fm)
+    store.update(left_panel_width=340)
+    assert store.state.left_panel_width == 340
+    assert not fm.exists(STATE_FILE)
+
+
+def test_absent_panel_width_means_unset(fm) -> None:
+    """Без сохранённой ширины панель открывается по умолчанию (0 — не задано)."""
+    fm.write_text(STATE_FILE, "{}")
+    state = WindowStateStore(fm).state
+    assert (state.left_panel_width, state.right_panel_width) == (0, 0)
+
+
+def test_broken_panel_width_falls_back_to_default(fm) -> None:
+    """Мусор в поле ширины не роняет запуск: панель берёт умолчание."""
+    fm.write_text(
+        STATE_FILE,
+        json.dumps({"left_panel_width": "wide", "right_panel_width": None}),
+    )
+    state = WindowStateStore(fm).state
+    assert (state.left_panel_width, state.right_panel_width) == (0, 0)
+
+
+def test_negative_panel_width_is_treated_as_unset(fm) -> None:
+    """Отрицательная ширина бессмысленна — читается как «не задана»."""
+    fm.write_text(STATE_FILE, json.dumps({"left_panel_width": -50}))
+    assert WindowStateStore(fm).state.left_panel_width == 0

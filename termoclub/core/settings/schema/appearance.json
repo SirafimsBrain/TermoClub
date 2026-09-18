@@ -55,6 +55,28 @@
       "description": "Terminal info panel on startup.",
       "default": true
     },
+    "left_panel_max_width": {
+      "type": "integer",
+      "label": "Left panel max width",
+      "description": "Upper limit for dragging the left panel open.",
+      "default": 600,
+      "min": 160,
+      "max": 1200,
+      "step": 20,
+      "unit": "px",
+      "applier": "panel_widths"
+    },
+    "right_panel_max_width": {
+      "type": "integer",
+      "label": "Right panel max width",
+      "description": "Upper limit for dragging the right panel open.",
+      "default": 600,
+      "min": 160,
+      "max": 1200,
+      "step": 20,
+      "unit": "px",
+      "applier": "panel_widths"
+    },
     "status_bar_font_size": {
       "type": "integer",
       "label": "Status bar font size",

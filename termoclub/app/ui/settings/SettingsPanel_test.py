@@ -67,7 +67,7 @@ def test_every_category_passes_the_client_contract(tmp_path: Path) -> None:
 
 
 def test_whole_page_exposes_both_columns(tmp_path: Path) -> None:
-    """Экран — заголовок, список категорий, разделитель и панель категории."""
+    """Экран — левая колонка (заголовок над шевронами), разделитель и панель."""
     view = _page_view(tmp_path)
     root = view.control
     assert isinstance(root, ft.Row)
@@ -75,6 +75,29 @@ def test_whole_page_exposes_both_columns(tmp_path: Path) -> None:
     assert "VerticalDivider" in kinds
     # Правая панель показывает настройки выбранной категории.
     assert view.panel.rows, "у категории по умолчанию должны быть строки настроек"
+
+
+def test_settings_header_sits_above_the_category_chevrons(tmp_path: Path) -> None:
+    """Заголовок «Settings» стоит над списком шевронов, а не слева от него.
+
+    Иначе заголовок занимал отдельную колонку по всей высоте вкладки, и под
+    ним оставалась пустая полоса, а список категорий начинался ниже.
+    """
+    view = _page_view(tmp_path)
+    left_column = view.control.controls[0].content
+    assert isinstance(left_column, ft.Column)
+    header, chevrons = left_column.controls
+    assert isinstance(header, ft.Column)
+    texts = [control.value for control in header.controls if isinstance(control, ft.Text)]
+    assert texts[0] == "Settings"
+    # Вторым идёт именно список категорий, а не заголовок: `sidebar.control`
+    # — свойство, собирающее контейнер заново, поэтому сравниваем структуру
+    # (колонка с шевронами внутри), а не тождество объектов.
+    assert isinstance(chevrons, ft.Container)
+    assert isinstance(chevrons.content, ft.Column)
+    assert chevrons.content is view.sidebar._column
+    # И это единственная колонка слева: заголовок больше не отдельный столбец.
+    assert len(view.control.controls) == 3
 
 
 def test_every_widget_of_the_page_is_serializable(tmp_path: Path) -> None:

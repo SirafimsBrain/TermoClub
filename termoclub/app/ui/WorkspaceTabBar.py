@@ -44,7 +44,13 @@ class WorkspaceTabBar:
             content=ft.Row(
                 [
                     FontAwesome.icon(data.icon, size=13),
-                    ft.Text(data.title, size=13),
+                    ft.Text(
+                        data.title,
+                        size=13,
+                        max_lines=1,
+                        overflow=ft.TextOverflow.ELLIPSIS,
+                        tooltip=data.title,
+                    ),
                     ft.IconButton(
                         icon=ft.Icons.CLOSE,
                         icon_size=13,

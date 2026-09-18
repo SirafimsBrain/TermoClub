@@ -59,20 +59,42 @@ class SettingsPage:
                 ft.Container(
                     content=ft.Column(
                         [
-                            # `theme_style`, а не `style`: во Flet `style` —
-                            # это `TextStyle`, и клиент разбирает его как map
-                            # (`value["weight"]`). Enum `TextThemeStyle`
-                            # сериализуется строкой, поэтому Dart падал на
-                            # сборке виджета и вкладка оставалась серой
-                            # заглушкой `ErrorWidget`.
-                            ft.Text("Settings", theme_style=ft.TextThemeStyle.TITLE_LARGE),
-                            ft.Text("Application and plugin settings.", size=11, color=ft.Colors.ON_SURFACE_VARIANT),
+                            ft.Column(
+                                [
+                                    # `theme_style`, а не `style`: во Flet
+                                    # `style` — это `TextStyle`, и клиент
+                                    # разбирает его как map
+                                    # (`value["weight"]`). Enum
+                                    # `TextThemeStyle` сериализуется строкой,
+                                    # поэтому Dart падал на сборке виджета и
+                                    # вкладка оставалась серой заглушкой
+                                    # `ErrorWidget`.
+                                    ft.Text(
+                                        "Settings",
+                                        theme_style=ft.TextThemeStyle.TITLE_LARGE,
+                                    ),
+                                    ft.Text(
+                                        "Application and plugin settings.",
+                                        size=11,
+                                        color=ft.Colors.ON_SURFACE_VARIANT,
+                                    ),
+                                ],
+                                spacing=2,
+                            ),
+                            # Заголовок стоит **над** шевронами, а не отдельной
+                            # колонкой слева: раньше он занимал полосу по всей
+                            # высоте вкладки, и под ним оставалась пустая
+                            # вертикальная полоса. Здесь заголовок и список
+                            # делят одну колонку, поэтому список начинается
+                            # сразу под ним.
+                            self.sidebar.control,
                         ],
-                        spacing=2,
+                        spacing=0,
+                        tight=True,
+                        expand=True,
                     ),
-                    padding=ft.Padding.all(12),
+                    padding=ft.Padding.only(left=12, top=12, right=0),
                 ),
-                self.sidebar.control,
                 ft.VerticalDivider(width=1),
                 self.panel.control,
             ],

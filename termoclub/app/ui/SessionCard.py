@@ -16,6 +16,11 @@ STATUS_COLORS = {
     SessionStatus.ERROR: ft.Colors.RED,
 }
 
+#: Нижняя граница ширины колонки с заголовком карточки. Панель тянется
+#: мышью, и без границы заголовок в узкой карточке переносился по символу,
+#: вырастая в высокий столбик.
+CARD_TEXT_MIN_WIDTH = 120
+
 
 class SessionCard:
     """Карточка одной сессии: заголовок, статус, слоты под метрики/действия."""
@@ -58,17 +63,32 @@ class SessionCard:
                     ft.Row(
                         [
                             FontAwesome.icon(data.icon, size=14),
-                            ft.Column(
-                                [
-                                    ft.Text(data.title, size=13, weight=ft.FontWeight.BOLD),
-                                    ft.Text(
-                                        f"{data.source} · {data.kind}",
-                                        size=10,
-                                        color=ft.Colors.GREY,
-                                    ),
-                                ],
-                                spacing=0,
+                            ft.Container(
+                                content=ft.Column(
+                                    [
+                                        ft.Text(
+                                            data.title,
+                                            size=13,
+                                            weight=ft.FontWeight.BOLD,
+                                            max_lines=1,
+                                            overflow=ft.TextOverflow.ELLIPSIS,
+                                            tooltip=data.title,
+                                        ),
+                                        ft.Text(
+                                            f"{data.source} · {data.kind}",
+                                            size=10,
+                                            color=ft.Colors.GREY,
+                                            max_lines=1,
+                                            overflow=ft.TextOverflow.ELLIPSIS,
+                                        ),
+                                    ],
+                                    spacing=0,
+                                ),
                                 expand=True,
+                                # Нижняя граница ширины: панель можно сузить
+                                # перетаскиванием, и без неё заголовок
+                                # переносился по символу, вырастая в столбик.
+                                width=CARD_TEXT_MIN_WIDTH,
                             ),
                             ft.IconButton(
                                 icon=ft.Icons.CLOSE,

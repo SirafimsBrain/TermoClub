@@ -45,6 +45,22 @@ def _flag(value: Any, fallback: bool) -> bool:
     return fallback
 
 
+def _optional_width(value: Any) -> int:
+    """Читает сохранённую ширину панели; 0 — «ширина не задана».
+
+    Ноль означает «пользователь ширину не тянул»: тогда панель открывается
+    на ширину по умолчанию. Ограничения проверяет сам layout, здесь важно
+    лишь отбросить мусор из файла.
+    """
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return 0
+    try:
+        number = int(value)
+    except (TypeError, ValueError, OverflowError):
+        return 0
+    return number if number > 0 else 0
+
+
 @dataclass
 class WindowState:
     """Состояние главного окна: геометрия и раскрытые панели."""
@@ -54,6 +70,9 @@ class WindowState:
     maximized: bool = False
     left_panel_open: bool = False
     right_panel_open: bool = False
+    #: Ширина панелей, выставленная перетаскиванием (0 — не трогали).
+    left_panel_width: int = 0
+    right_panel_width: int = 0
     #: Зарезервировано под восстановление вкладок (отдельная задача).
     tabs: list[dict[str, Any]] = field(default_factory=list)
 
@@ -65,6 +84,8 @@ class WindowState:
             "maximized": self.maximized,
             "left_panel_open": self.left_panel_open,
             "right_panel_open": self.right_panel_open,
+            "left_panel_width": self.left_panel_width,
+            "right_panel_width": self.right_panel_width,
             "tabs": list(self.tabs),
         }
 
@@ -84,6 +105,8 @@ class WindowState:
             maximized=_flag(payload.get("maximized"), base.maximized),
             left_panel_open=_flag(payload.get("left_panel_open"), base.left_panel_open),
             right_panel_open=_flag(payload.get("right_panel_open"), base.right_panel_open),
+            left_panel_width=_optional_width(payload.get("left_panel_width")),
+            right_panel_width=_optional_width(payload.get("right_panel_width")),
             tabs=_tab_list(payload.get("tabs")),
         )
 

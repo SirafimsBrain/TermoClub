@@ -88,3 +88,60 @@ def test_card_click_selects_and_close_closes() -> None:
     assert closes, "card must have a close button"
     closes[0](None)
     assert closed == ["s1"]
+
+
+def _text_controls(control: ft.Control) -> list[ft.Text]:
+    """Все `ft.Text` в дереве контрола."""
+    found: list[ft.Text] = []
+
+    def visit(node: object) -> None:
+        if isinstance(node, ft.Text):
+            found.append(node)
+        for child in getattr(node, "controls", None) or []:
+            visit(child)
+        content = getattr(node, "content", None)
+        if isinstance(content, ft.Control):
+            visit(content)
+
+    visit(control)
+    return found
+
+
+def test_card_text_never_wraps_into_a_vertical_column() -> None:
+    """Заголовок и подпись ограничены одной строкой с многоточием.
+
+    Панель с карточками тянут мышью: без ограничения заголовок в узкой
+    карточке переносился по одному символу в строке, и карточка вырастала
+    в высокий столбик из букв.
+    """
+    texts = _text_controls(SessionCard(_data()).build())
+    by_value = {text.value: text for text in texts}
+    title = by_value["ops"]
+    assert title.max_lines == 1
+    assert title.overflow == ft.TextOverflow.ELLIPSIS
+    # Полный текст доступен в подсказке, раз его обрезали.
+    assert title.tooltip == "ops"
+
+
+def test_card_title_has_a_readable_minimum_width() -> None:
+    """Колонка заголовка не сжимается уже читаемого минимума.
+
+    Это вторая половина защиты от «столбика»: даже с `max_lines` слишком
+    узкая колонка нечитаема, поэтому у неё есть нижняя граница.
+    """
+    from app.ui.SessionCard import CARD_TEXT_MIN_WIDTH
+
+    holders: list[ft.Container] = []
+
+    def visit(node: object) -> None:
+        for child in getattr(node, "controls", None) or []:
+            visit(child)
+        content = getattr(node, "content", None)
+        if isinstance(content, ft.Control):
+            visit(content)
+        if isinstance(node, ft.Container) and node.width:
+            holders.append(node)
+
+    visit(SessionCard(_data()).build())
+    widths = [holder.width for holder in holders]
+    assert CARD_TEXT_MIN_WIDTH in widths, widths

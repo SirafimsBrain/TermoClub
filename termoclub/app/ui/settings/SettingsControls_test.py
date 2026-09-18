@@ -30,7 +30,7 @@ from app.ui.settings.LinkSettingControl import LinkSettingControl
 from app.ui.settings.NumberSettingControl import NumberSettingControl
 from app.ui.settings.PathPicker import PathPicker
 from app.ui.settings.PathSettingControl import PathSettingControl
-from app.ui.settings.SettingControl import SettingControl
+from app.ui.settings.SettingControl import TEXT_MIN_WIDTH, SettingControl
 from app.ui.settings.SettingsControls import SettingsControls
 from app.ui.settings.SettingsDeps import SettingsDeps
 from app.ui.settings.TextSettingControl import TextSettingControl
@@ -485,3 +485,42 @@ class SimpleEvent:
 
     def __init__(self, value: object) -> None:
         self.control = type("Control", (), {"value": value})()
+
+
+# --- Узкая строка настроек: текст не «разъезжается» по высоте ---
+
+
+def test_setting_text_column_has_a_readable_minimum_width(tmp_path: Path) -> None:
+    """Колонка с подписью и описанием не сжимается ниже читаемого минимума.
+
+    В узком окне на неё оставалось всё меньше места, и `ft.Text` начинал
+    переносить по одному символу: описание вырастало в вертикальную полосу.
+    """
+    _, controls = _factory(tmp_path)
+    control = _built(controls, "global", "theme_mode")
+    widths = [
+        child.width
+        for child in control.control.content.controls
+        if isinstance(child, ft.Container) and child.width
+    ]
+    assert TEXT_MIN_WIDTH in widths, widths
+
+
+def test_setting_description_is_capped_and_ellipsized(tmp_path: Path) -> None:
+    """Длинное описание ограничено по строкам и обрезается многоточием."""
+    _, controls = _factory(tmp_path)
+    control = _built(controls, "global", "theme_mode")
+    spec = control.category.spec("theme_mode")
+    assert spec is not None and spec.description, "у настройки должно быть описание"
+
+    descriptions = [
+        child
+        for child in control.control.content.controls[0].content.controls
+        if isinstance(child, ft.Text) and child.value == spec.description
+    ]
+    assert descriptions, "описание должно быть в строке настроек"
+    description = descriptions[0]
+    assert description.max_lines == 2
+    assert description.overflow == ft.TextOverflow.ELLIPSIS
+    # Обрезанный текст целиком читается в подсказке.
+    assert description.tooltip == spec.description
